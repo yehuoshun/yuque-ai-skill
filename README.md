@@ -190,7 +190,7 @@ npx yuque-mcp install --token=YOUR_TOKEN --client=cursor
 | `token` | 语雀 Token，需要读取和写入权限 |
 | `group` | 用户名或团队名，用于搜索 scope 参数前缀 |
 | `index_master_book` | 索引总库，存放总文档（JSON 元信息），每个关键词对应一个总文档 |
-| `index_books` | 索引子库列表，存放子文档（具体索引内容）。接近 5000 文档上限时可添加更多 |
+| `index_books` | 索引子库列表，存放子文档（具体索引内容）。接近 4500 篇时建议添加更多（语雀上限 5000 篇） |
 | `default_book` | 创建文档时的默认知识库 |
 | `index_state` | 状态文件存储位置。`"local"` = 本地 `~/.openclaw/workspace/utils/yuque/index_state.json`；自定义路径如 `"/path/to/state.json"`；或语雀文档对象 `{"type":"yuque","book_id":0,"doc_id":0}`（需用户手动创建后填入 doc_id） |
 | `segment_length` | 分段长度（字），长文档分段喂给 LLM 时用，默认 2000 |
