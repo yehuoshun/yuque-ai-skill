@@ -727,7 +727,7 @@ GET /api/v2/groups/{login}/statistics/docs
 | 单知识库文档数 | 5000 |
 | API QPS | 100/s |
 | API 每小时请求 | 5000/h |
-| 文档标题字数 | 255 |
+| 文档标题字数 | 200 |
 
 ## 错误处理
 
