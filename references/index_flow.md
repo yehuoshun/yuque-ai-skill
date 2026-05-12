@@ -43,6 +43,8 @@
   "skipped_docs": [],
   "failed_docs": [],
   "dead_entries": [],
+  "entity_map": {},
+  "relation_map": {},
   "last_indexed_doc_id": null,
   "last_updated": null,
   "status": "idle",
@@ -64,6 +66,8 @@
 | `skipped_docs` | 待确认/已跳过的文档列表（无意义/异常文档） |
 | `title_fallback_docs` | 标题降级索引的文档列表 |
 | `failed_docs` | 失败文档列表（API 错误、超时等） |
+| `entity_map` | 实体缓存 `{实体名: {type, doc_ids, relations}}`，搜索结果命中实体时直接使用 |
+| `relation_map` | 关系缓存 `{关系描述: [源文档ID]}`，搜索时辅助跨文档推理 |
 | `dead_entries` | 死条目列表（源文档已删除，待清理的索引条目） |
 | `last_indexed_doc_id` | 最后索引的文档 ID（断点续传锚点） |
 | `status` | `idle` / `in_progress` / `awaiting_confirmation` / `done` / `failed` |
@@ -183,6 +187,8 @@
 | 时间词 | 精确匹配 | 今天、明天、昨天、今年、去年、上周、下周 | 无 |
 | 通用词 | 精确匹配 | test、测试、临时、草稿、新建文档、无标题 | 无 |
 
+**@实体: 关键词豁免**：以 `@实体:` 开头的关键词直接通过所有过滤规则，不参与数量控制（独立计数）。
+
 **第二层：语义判断兜底**
 
 对通过第一层的关键词，问自己：
@@ -204,33 +210,46 @@
 - 技术术语：HTTP/2、IPv6、5G、4K、MP3、JSON
 - 有语义编号：Windows 11、iPhone 15
 
-## 同义词扩展策略（索引阶段）
+## 关键词 + 实体/关系提取（索引阶段）
 
-LLM 提取关键词时，同时生成同义词/近义词/缩写/英文变体：
+LLM 对每篇文档**一次调用**同时提取关键词、实体和关系：
 
 ```
-源文档「Python安装指南」
+源文档「亿级流量系统架构设计」（节选）
+> 张三是亿级流量系统的架构师。系统采用 Redis 做缓存层，QPS 峰值 50 万。张三是 Redis 专家，负责核心缓存模块。
 
 LLM 提取结果：
 {
   "keywords": [
-    {
-      "keyword": "Python",
-      "synonyms": ["py", "python3", "py3"]
-    },
-    {
-      "keyword": "安装",
-      "synonyms": ["install", "环境配置", "环境搭建"]
-    },
-    {
-      "keyword": "pip",
-      "synonyms": []
-    }
+    {"keyword": "亿级流量", "synonyms": ["高并发"]},
+    {"keyword": "Redis", "synonyms": ["缓存"]},
+    {"keyword": "QPS", "synonyms": ["吞吐量"]},
+    {"keyword": "@实体:张三", "synonyms": []},
+    {"keyword": "@实体:Redis", "synonyms": []},
+    {"keyword": "@实体:亿级流量系统", "synonyms": []}
+  ],
+  "entities": [
+    {"name": "张三", "type": "人物"},
+    {"name": "Redis", "type": "技术/中间件"},
+    {"name": "亿级流量系统", "type": "项目"}
+  ],
+  "relations": [
+    "张三→负责→亿级流量系统",
+    "Redis→用于→亿级流量系统",
+    "Redis→达到→50万QPS"
   ]
 }
 
-展开后的索引词列表：Python, py, python3, py3, 安装, install, 环境配置, 环境搭建, pip
+展开后的索引词列表：
+  亿级流量, 高并发, Redis, 缓存, QPS, 吞吐量, @实体:张三, @实体:Redis, @实体:亿级流量系统
 ```
+
+**实体/关系提取规则**：
+- 实体类型：人物、技术/中间件、项目/产品、公司/组织、概念/术语
+- 关系格式：`主体→谓语→客体`，从文档正文中提取明确陈述的关系，不臆造
+- `@实体:xxx` 作为特殊关键词存入索引，前缀用于搜索端识别实体查询
+- 实体的同义词（如 Redis → 缓存）仍走普通关键词路径
+- 无明确实体或关系的文档，`entities`/`relations` 为空数组，不影响索引构建
 
 ### 同义词类型
 
@@ -351,6 +370,8 @@ LLM 提取结果：
 ### Java JUC 线程池详解
 - **摘要**: 深入分析 Java 线程池的实现原理...
 - **关键词**: Java, JUC, 线程池, ThreadPoolExecutor
+- **实体**: @实体:Java(语言), @实体:ThreadPoolExecutor(技术)
+- **关系**: Java→包含→ThreadPoolExecutor
 - **源文档ID**: 205935051
 - **源知识库ID**: 60455024
 - **Namespace**: yehuoshun/gi49zs
@@ -360,6 +381,8 @@ LLM 提取结果：
 ### Python 线程池实践
 - **摘要**: Python concurrent.futures 线程池使用...
 - **关键词**: Python, 线程池, concurrent.futures
+- **实体**: @实体:Python(语言)
+- **关系**: --
 - **源文档ID**: 205935052
 - **源知识库ID**: 60455024
 - **Namespace**: yehuoshun/gi49zs
@@ -439,18 +462,21 @@ LLM 提取结果：
    → 读对应子文档 → 删除匹配该 源文档ID 的条目
    → PUT 更新子文档
 
-7. 对新增 + 保留关键词（含同义词）：
+7. 对新增 + 保留关键词（含同义词和 @实体: 词）：
    a. 搜索 index_master_book → 找 [索引] {词} 总文档
    b. 若存在：
       → 读当前子文档
-      → 找到 源文档ID 匹配的条目 → 替换（更新摘要、关键词等）
+      → 找到 源文档ID 匹配的条目 → 替换（更新摘要、关键词、实体、关系等）
       → 更新 current_size
    c. 若不存在：
       → 创建总文档 + 第一个子文档（与全量构建相同）
+   d. 同步更新状态文件的 entity_map / relation_map
 
 8. 汇报结果：
    ✅ 已更新《XXX》的索引
    新增关键词：A, B
+   新增实体：X(类型), Y(类型)
+   新增关系：X→谓语→Y
    保留关键词：C, D
    清理过时关键词：E, F（已从对应子文档删除）
 ```
