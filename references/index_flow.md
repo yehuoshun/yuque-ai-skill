@@ -43,8 +43,6 @@
   "skipped_docs": [],
   "failed_docs": [],
   "dead_entries": [],
-  "entity_map": {},
-  "relation_map": {},
   "last_indexed_doc_id": null,
   "last_updated": null,
   "status": "idle",
@@ -66,8 +64,6 @@
 | `skipped_docs` | 待确认/已跳过的文档列表（无意义/异常文档） |
 | `title_fallback_docs` | 标题降级索引的文档列表 |
 | `failed_docs` | 失败文档列表（API 错误、超时等） |
-| `entity_map` | 实体缓存 `{实体名: {type, doc_ids, relations}}`，搜索结果命中实体时直接使用 |
-| `relation_map` | 关系缓存 `{关系描述: [源文档ID]}`，搜索时辅助跨文档推理 |
 | `dead_entries` | 死条目列表（源文档已删除，待清理的索引条目） |
 | `last_indexed_doc_id` | 最后索引的文档 ID（断点续传锚点） |
 | `status` | `idle` / `in_progress` / `awaiting_confirmation` / `done` / `failed` |
@@ -470,7 +466,6 @@ LLM 提取结果：
       → 更新 current_size
    c. 若不存在：
       → 创建总文档 + 第一个子文档（与全量构建相同）
-   d. 同步更新状态文件的 entity_map / relation_map
 
 8. 汇报结果：
    ✅ 已更新《XXX》的索引
