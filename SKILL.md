@@ -1,6 +1,6 @@
 ---
 name: yuque-ai
-description: 语雀全功能技能。支持 AI 问答、知识库管理、文档管理、文档版本管理、小记管理、目录管理、群组成员管理、统计数据、索引管理、文档导出。当用户提到「语雀」时触发，如「在语雀搜索...」「我的语雀知识库...」「创建语雀文档...」「语雀小记...」。
+description: 语雀全功能技能。支持 AI 问答、知识库管理、文档管理、小记管理、目录管理、索引管理、文档导出。版本管理、群组、统计等按需查 API 参考。当用户提到「语雀」时触发，如「在语雀搜索...」「我的语雀知识库...」「创建语雀文档...」「语雀小记...」。
 ---
 
 # 语雀 AI 技能
@@ -13,7 +13,7 @@ description: 语雀全功能技能。支持 AI 问答、知识库管理、文档
 
 ## 配置
 
-从 `MEMORY.md` → 语雀章节 读取配置文件路径，加载 `yuque-config.json`。
+从 `MEMORY.md` 语雀章节读取配置文件路径，加载 `yuque-config.json`。
 
 ```json
 {
@@ -33,12 +33,12 @@ description: 语雀全功能技能。支持 AI 问答、知识库管理、文档
 - **方式**：Python `urllib.request`（禁止 pip install），简单请求可用 curl
 - **超时**：所有请求 `timeout=30`
 - **并发**：批量场景 `ThreadPoolExecutor`，并发 ≤ 5
-- **速率**：每批后检查 `X-RateLimit-Remaining`，<200 暂停等整点；429 区分 5000/h（暂停）和 100/s（等1s重试×3）
+- **速率**：每批次请求后检查 `X-RateLimit-Remaining`，<200 暂停等整点；429 区分 5000/h（暂停）和 100/s（等1s重试×3）
 - **scope**：搜索 API 用 namespace 格式（`group/book_slug`），不支持 book_id
 
-## 功能路由
+## API 速查
 
-### 知识库管理
+### 知识库
 
 | 操作 | 端点 | 注意 |
 |------|------|------|
@@ -48,7 +48,7 @@ description: 语雀全功能技能。支持 AI 问答、知识库管理、文档
 | 更新 | `PUT /repos/{id_or_namespace}` | 支持 `toc` 全量替换目录 |
 | 删除 | `DELETE /repos/{id_or_namespace}` | 硬删除不可逆，**必须先确认** |
 
-### 文档管理
+### 文档
 
 | 操作 | 端点 | 注意 |
 |------|------|------|
@@ -60,7 +60,7 @@ description: 语雀全功能技能。支持 AI 问答、知识库管理、文档
 
 > ⚠️ **TOC 挂载**：`POST /docs` 后文档默认不显示。调 `PUT /toc`（action=appendNode, action_mode=sibling, type=DOC, doc_ids=[id], target_uuid=首个TITLE的uuid）。失败等1s重试×3，仍失败则提示手动拖入。
 
-### 小记管理
+### 小记
 
 | 操作 | 端点 | 注意 |
 |------|------|------|
@@ -83,7 +83,7 @@ GET /search?q={query}&type=doc&scope={namespace}&page=1
 
 ### 目录 / 群组 / 统计 / 版本
 
-详见 [api_reference.md](references/api_reference.md)——这些不常用，按需查。
+不常用，按需查 [api_reference.md](references/api_reference.md)。
 
 ### 文档导出
 
@@ -105,18 +105,9 @@ PUT /repos/{book_id}/toc    →  appendNode + sibling + target_uuid
 
 若 `PUT /toc` 返回 404：检查 target_uuid 是否存在、book_id 是否正确、文档是否真的创建成功。排除后重试 curl 方式（非 Python）。
 
-## AI 问答（三层检索）
-
-**触发**：「在语雀搜索...」「问语雀...」
-
-三层架构：
-1. **Layer 1**（~45%，token 0）：索引中 questions 精确/模糊匹配 → 直接返回 direct_answer
-2. **Layer 2**（~35%，token ~800）：关键词命中但 questions 未命中 → 读 Top 5 chunk → LLM 生成
-3. **Layer 3**（~20%）：索引未覆盖 → 原生搜索兜底 → 读 Top 3 全文 → LLM 生成 → 记录漏提问
-
-回答始终标注来源文档链接。
-
 ## 索引管理
+
+AI 问答的前置依赖，必须先有索引才能走 Layer 1 / Layer 2 检索。
 
 **构建**：「构建语雀索引」
 - 自动模式：每批 10 篇连续跑，>2000 篇拒绝改手动
@@ -125,9 +116,21 @@ PUT /repos/{book_id}/toc    →  appendNode + sibling + target_uuid
 
 **增量**：「更新《XXX》的索引」→ 单篇重新索引
 
-**补洞**：「补洞」「回灌漏提问」→ 处理 Layer 3 记录的 leak_queries
+**补洞**：「补洞」「回灌漏提问」→ 处理 AI 问答 Layer 3 记录的 leak_queries
 
-索引状态文件：`~/.openclaw/workspace/utils/yuque/index_state.json`
+索引状态文件：skill 目录下 `state/index_state.json`
+
+## AI 问答（三层检索）
+
+**触发**：「在语雀搜索...」「问语雀...」
+
+三层架构，按优先级递减：
+
+1. **Layer 1**：索引中 questions 精确/模糊匹配 → 直接返回 direct_answer
+2. **Layer 2**：关键词命中但 questions 未命中 → 读 Top 5 chunk → LLM 生成
+3. **Layer 3**：索引未覆盖 → 原生搜索兜底 → 读 Top 3 全文 → LLM 生成 → 记录漏提问
+
+回答始终标注来源文档链接。
 
 ## 删除确认规范
 
