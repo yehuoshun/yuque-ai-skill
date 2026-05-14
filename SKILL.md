@@ -19,9 +19,7 @@ description: 语雀全功能技能。支持 AI 问答、知识库管理、文档
 {
   "token": "语雀 API Token",
   "group": "用户名",
-  "default_book": { "book_id": 0, "namespace": "" },
-  "index_master_book": { "book_id": 0, "namespace": "" },
-  "index_books": [{ "book_id": 0, "namespace": "" }]
+  "default_book": { "book_id": 0, "namespace": "" }
 }
 ```
 
