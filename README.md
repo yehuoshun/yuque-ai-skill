@@ -19,9 +19,9 @@
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
 - [使用方式](#使用方式)
+- [知识库问答](#知识库问答)
 - [项目结构](#项目结构)
 - [API 参考](#api-参考)
-- [License](#license)
 
 ## 功能特性
 
@@ -64,26 +64,16 @@ git clone https://github.com/yehuoshun/yuque-ai-skill.git
 cd yuque-ai-skill
 ```
 
-### 1. 环境
-
-Python 3.8+，无外部依赖。
-
-### 2. 配置
+### 1. 配置
 
 ```bash
 cp config/yuque-config.example.json config/yuque-config.json
 # 编辑填入 token、group、default_book，详见下方「配置说明」
 ```
 
-### 3. 使用
+### 2. 使用
 
-直接对 AI Agent 说：
-
-- 「列出我的知识库」
-- 「在语雀搜索 Python 教程」
-- 「创建一篇文档到 XXX」
-- 「导出《XXX》知识库」
-- 「创建一条小记 今天学了 RAG」
+见下方「使用方式」，直接对 AI Agent 说即可。
 
 ## 配置说明
 
@@ -142,12 +132,7 @@ cp config/yuque-config.example.json config/yuque-config.json
 | 问答 | 「Docker 容器之间怎么通信」「Python 怎么处理异常」 |
 | 导出 | 「导出《XXX》知识库」「批量导出所有文档」 |
 
-### AI Agent 自动处理
-
-1. 检查 Token 有效性（`GET /hello`）→ 验证知识库存在性
-2. 按操作类型选择 API / LLM 轨并发策略
-3. 速率自动控制，429 区分 QPS 突发 vs 小时配额耗尽
-4. 操作完成自动校验结果（TOC 挂载成功后验证文档可见）
+详情见 [SKILL.md](./SKILL.md)「调用约定」。Agent 自动处理 Token 校验、并发调度、速率退避、结果校验。
 
 ## 项目结构
 
@@ -167,49 +152,19 @@ yuque-ai-skill/
 
 ## 知识库问答
 
-基于两级索引的纯 LLM + 语雀 API 方案，不依赖嵌入模型、向量数据库或第三方搜索 API。
+两级索引（总库路由 → 子库关键词）+ 多路并发搜索 + 同义词/路由缓存 + LLM 生成答案。纯 LLM + 语雀 API，零外部依赖。
 
-### 架构
-
-```
-用户提问 → 同义词缓存（子串匹配）→ 路由缓存 → 并发搜索索引子库 → 精准标题匹配 → 读索引全文 → LLM 生成答案 + 引用
-```
-
-### 缓存体系
-
-| 缓存层 | 存储 | TTL |
-|--------|------|-----|
-| 同义词 | synonym_cache.json | 永久 |
-| 路由 | SQLite | 1天 |
-| 搜索结果 | SQLite | 10分钟 |
-| 索引文档内容 | 不缓存 | — |
-
-### 搜索降级
+完整搜索管线、缓存策略、索引构建、搜索降级 → **[SKILL.md#一知识库问答系统](./SKILL.md#一知识库问答系统)**。
 
 ```
-正常路径 → LLM 放大搜索词 → 语雀全文搜索 → 「未找到相关内容」
+同义词缓存（子串匹配）→ 路由缓存 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
 ```
 
 ## API 参考
 
-语雀 OpenAPI 完整接口参考见 [references/api_reference.md](./references/api_reference.md)。
+详见 **[SKILL.md#二api-速查管理操作](./SKILL.md#二api-速查管理操作)**。完整端点/参数/错误码 → [references/api_reference.md](./references/api_reference.md)。
 
 基地址：`https://www.yuque.com/api/v2`
-
-核心端点速查：
-
-| 模块 | 端点 | 说明 |
-|------|------|------|
-| Hello | `GET /hello` | 验证 Token |
-| 知识库 | `GET/POST /users/{login}/repos` | 列表/创建 |
-| 知识库 | `GET/PUT/DELETE /repos/{id_or_namespace}` | 详情/更新/删除 |
-| 文档 | `GET /repos/{book_id}/docs` | 列表（分页，limit≤100） |
-| 文档 | `GET/POST/PUT/DELETE /repos/{book_id}/docs/{doc_id}` | CRUD |
-| 目录 | `GET/PUT /repos/{book_id}/toc` | 读取/更新目录 |
-| 小记 | `GET/POST /notes` | 列表/创建 |
-| 小记 | `GET/PUT /notes/{note_id}` | 详情/更新/删除/恢复 |
-| 搜索 | `GET /search?q=&type=doc&scope=&page=` | 全文搜索（支持 namespace 限定） |
-| 搜索（问答） | 多路并发搜索索引子库 → 读索引全文解析内容段 | 两级索引知识库问答专用 |
 
 ## License
 
