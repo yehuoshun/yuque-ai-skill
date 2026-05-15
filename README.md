@@ -1,6 +1,6 @@
 # 语雀 AI Skill
 
-> 语雀全功能 AI Agent 技能 —— 知识库管理、文档 CRUD、小记管理、目录编排、批量导出，一切通过自然语言驱动。
+> 语雀全功能 AI Agent 技能 —— 知识库管理、文档 CRUD、小记管理、目录编排、批量导出、两级索引知识库问答（纯 LLM + 语雀 API，零外部依赖），一切通过自然语言驱动。
 
 > 📄 **Skill 规范文档**：[SKILL.md](./SKILL.md) — AI Agent 执行指南，所有功能细节以该文件为准。
 
@@ -37,6 +37,7 @@
 | 🔗 **跨库引用** | 自动解析 namespace 与 book_id 互转 |
 | 🛡️ **错误处理** | 401/403/404/429/5xx 分级处理，Token 失效自动提示更新 |
 | 📊 **任务汇总** | 导出完成后通知（成功/失败/跳过/路径/耗时） |
+| 🧠 **知识库问答** | 两级索引（总库路由 → 子库关键词），多路并发搜索，同义词缓存 + 路由缓存，LLM 生成答案 + 引用出处 |
 
 ## 前置条件
 
@@ -151,6 +152,7 @@ cp config/yuque-config.example.json config/yuque-config.json
 | 文档操作 | 「在 XXX 知识库创建一篇文档」「更新《XXX》的内容」 |
 | 小记 | 「写一条小记」「查看今天的小记」「恢复那条删除的小记」 |
 | 搜索 | 「在语雀搜索 XXX」 |
+| 问答 | 「Docker 容器之间怎么通信」「Python 怎么处理异常」 |
 | 导出 | 「导出《XXX》知识库」「批量导出所有文档」 |
 
 ### AI Agent 自动处理
@@ -176,6 +178,31 @@ yuque-ai-skill/
         └── dingtalk-notify.yml  # CI：钉钉通知
 ```
 
+## 知识库问答
+
+基于两级索引的纯 LLM + 语雀 API 方案，不依赖嵌入模型、向量数据库或第三方搜索 API。
+
+### 架构
+
+```
+用户提问 → 同义词缓存（子串匹配）→ 路由缓存 → 并发搜索索引子库 → 精准标题匹配 → 读索引全文 → LLM 生成答案 + 引用
+```
+
+### 缓存体系
+
+| 缓存层 | 存储 | TTL |
+|--------|------|-----|
+| 同义词 | synonym_cache.json | 永久 |
+| 路由 | SQLite | 1天 |
+| 搜索结果 | SQLite | 10分钟 |
+| 索引文档内容 | 不缓存 | — |
+
+### 搜索降级
+
+```
+正常路径 → LLM 放大搜索词 → 语雀全文搜索 → 「未找到相关内容」
+```
+
 ## API 参考
 
 语雀 OpenAPI 完整接口参考见 [references/api_reference.md](./references/api_reference.md)。
@@ -194,7 +221,8 @@ yuque-ai-skill/
 | 目录 | `GET/PUT /repos/{book_id}/toc` | 读取/更新目录 |
 | 小记 | `GET/POST /notes` | 列表/创建 |
 | 小记 | `GET/PUT /notes/{note_id}` | 详情/更新/删除/恢复 |
-| 搜索 | `GET /search?q=&type=doc&scope=&page=` | 全文搜索 |
+| 搜索 | `GET /search?q=&type=doc&scope=&page=` | 全文搜索（支持 namespace 限定） |
+| 搜索（问答） | 多路并发搜索索引子库 → 读索引全文解析内容段 | 两级索引知识库问答专用 |
 
 ## License
 
