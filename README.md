@@ -94,7 +94,9 @@ cp config/yuque-config.example.json config/yuque-config.json
   "group": "用户名",
   "default_book": { "book_id": 0, "namespace": "" },
   "index_master_book": { "book_id": 0, "namespace": "" },
-  "index_books": [{ "book_id": 0, "namespace": "" }]
+  "index_books": [{ "book_id": 0, "namespace": "" }],
+  "route_cache_ttl_days": 7,
+  "search_report_enabled": false
 }
 ```
 
@@ -108,6 +110,8 @@ cp config/yuque-config.example.json config/yuque-config.json
 | `index_master_book.namespace` |（可选）索引总库 namespace |
 | `index_books[].book_id` |（可选）索引子库 ID 列表 |
 | `index_books[].namespace` |（可选）索引子库 namespace 列表 |
+| `route_cache_ttl_days` |（可选）路由缓存过期天数，默认 7，0=禁用 |
+| `search_report_enabled` |（可选）搜索报告开关，默认 false |
 
 ### 速率限制
 
