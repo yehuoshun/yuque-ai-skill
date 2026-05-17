@@ -32,12 +32,12 @@
 | 📋 **小记管理** | 创建/列表/详情/更新/软删除/恢复，自动处理嵌套 content 结构 |
 | 📂 **目录编排** | TOC API 增删改，sibling/child 双模式挂载 |
 | 📤 **文档导出** | 单篇/批量导出 Markdown，TOC 还原目录树，图片本地化，增量导出 |
-| 🔍 **搜索** | 全文搜索，namespace 范围限定，结果高亮 |
+| 🔍 **文档搜索** | 按关键词搜索文档，namespace 范围限定，结果高亮，返回文档列表 |
 | 🚦 **双轨并发** | API 轨动态浮动（上限 10），LLM 轨内存公式驱动，429 自动退避 |
 | 🔗 **跨库引用** | 自动解析 namespace 与 book_id 互转 |
 | 🛡️ **错误处理** | 401/403/404/429/5xx 分级处理，Token 失效自动提示更新 |
 | 📊 **任务汇总** | 导出完成后通知（成功/失败/跳过/路径/耗时） |
-| 🧠 **知识库问答** | 两级索引（总库路由 → 子库关键词），多路并发搜索，路由缓存，LLM 生成答案 + 引用出处 |
+| 🧠 **知识库问答** | 自然语言提问，两级索引（总库路由 → 子库关键词），多路并发搜索，LLM 生成答案 + 引用出处 |
 
 ## 前置条件
 
@@ -95,7 +95,6 @@ cp config/yuque-config.example.json config/yuque-config.json
   "default_book": { "book_id": 0, "namespace": "" },
   "index_master_book": { "book_id": 0, "namespace": "" },
   "index_books": [{ "book_id": 0, "namespace": "" }],
-  "route_cache_ttl_days": 7,
   "search_report_enabled": false
 }
 ```
@@ -110,7 +109,6 @@ cp config/yuque-config.example.json config/yuque-config.json
 | `index_master_book.namespace` |（可选）索引总库 namespace |
 | `index_books[].book_id` |（可选）索引子库 ID 列表 |
 | `index_books[].namespace` |（可选）索引子库 namespace 列表 |
-| `route_cache_ttl_days` |（可选）路由缓存过期天数，默认 7，0=禁用 |
 | `search_report_enabled` |（可选）搜索报告开关，默认 false |
 
 ### 速率限制
@@ -146,7 +144,7 @@ yuque-ai-skill/
 ├── README.md             # 本文件
 ├── LICENSE
 ├── config/               # 配置文件目录
-│   └── yuque-config.json # 默认配置路径（可自定义）
+│   └── yuque-config.example.json # 配置模板（复制为 yuque-config.json 后填入）
 ├── references/
 │   └── api_reference.md  # 语雀 OpenAPI 完整参考
 └── .github/
@@ -156,12 +154,12 @@ yuque-ai-skill/
 
 ## 知识库问答
 
-两级索引（总库路由 → 子库关键词）+ 多路并发搜索 + 路由缓存 + LLM 生成答案。纯 LLM + 语雀 API，零外部依赖。
+两级索引（总库路由 → 子库关键词）+ 多路并发搜索 + LLM 生成答案。纯 LLM + 语雀 API，零外部依赖。
 
 完整搜索管线、缓存策略、索引构建、搜索降级 → **[SKILL.md#一知识库问答系统](./SKILL.md#一知识库问答系统)**。
 
 ```
-查路由缓存定位子库 → LLM 生成搜索词 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
+LLM 生成搜索词 → 搜总库定位子库 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
 ```
 
 ## API 参考
