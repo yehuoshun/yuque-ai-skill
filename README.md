@@ -104,7 +104,7 @@ cp config/yuque-config.example.json config/yuque-config.json
 |------|------|
 | `token` | 语雀 API Token（必填） |
 | `group` | 语雀用户名/login（必填） |
-| `default_book.book_id` | 默认知识库 ID，不指定目标时自动使用 |
+| `default_book.book_id` | 默认知识库（内容库）ID，不指定目标时自动使用 |
 | `default_book.namespace` | 默认知识库 namespace，如 `yehuoshun/my-book` |
 | `index_master_book.book_id` |（可选）索引总库 ID，问答功能使用 |
 | `index_master_book.namespace` |（可选）索引总库 namespace |
@@ -161,7 +161,7 @@ yuque-ai-skill/
 完整搜索管线、缓存策略、索引构建、搜索降级 → **[SKILL.md#一知识库问答系统](./SKILL.md#一知识库问答系统)**。
 
 ```
-LLM 生成搜索词 → 查路由缓存定位子库 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
+查路由缓存定位子库 → LLM 生成搜索词 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
 ```
 
 ## API 参考
