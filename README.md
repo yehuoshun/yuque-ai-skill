@@ -121,9 +121,12 @@ cp config/yuque-config.example.json config/yuque-config.json
 yuque-ai-skill/
 ├── SKILL.md              # Skill 规范文档（AI Agent 执行指南）
 ├── README.md             # 本文件
-├── LICENSE
+├── yuque_api.py          # 核心 API 封装（纯标准库，820行）
+├── yuque_search.py       # 搜索管线（两级索引+降级+跨库读取）
+├── yuque_index.py        # 索引构建器（全量/增量/SQLite状态）
 ├── config/               # 配置文件目录
-│   └── yuque-config.example.json # 配置模板（复制为 yuque-config.json 后填入）
+│   ├── yuque-config.example.json # 配置模板
+│   └── yuque-config.json         # 实际配置（不入库）
 ├── references/
 │   └── api_reference.md  # 语雀 OpenAPI 完整参考
 └── .github/
@@ -139,6 +142,24 @@ yuque-ai-skill/
 
 ```
 LLM 生成搜索词 → 搜总库定位子库 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
+```
+
+### Python 模块快速测试
+
+```bash
+# API 测试
+python3 yuque_api.py hello
+python3 yuque_api.py list-repos
+python3 yuque_api.py search "Java 面试" "yehuoshun/dil9w3"
+
+# 搜索管线
+python3 yuque_search.py combined "Python" "列表"
+python3 yuque_search.py degraded "Java 面试" "yehuoshun/dil9w3"
+
+# 索引构建
+python3 yuque_index.py list 70910909
+python3 yuque_index.py read 70910909 240965425
+python3 yuque_index.py state 70910909
 ```
 
 ## API 参考
