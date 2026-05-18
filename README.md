@@ -242,7 +242,7 @@ flowchart TD
 
     S1 --> M1["[1a] ⚡ 并行搜索索引总库<br/>batch_search(多组关键词, scope=总库ns)<br/>ThreadPoolExecutor 并发搜 title"]
     M1 --> M2["命中路由文档标题列表"]
-    M2 --> M3["🔸 LLM 挑 3-5 个最相关"]
+    M2 --> M3["🟡 [1b] 每组关键词各挑 3-5 个最相关<br/>3组关键词 × 3-5 = 9-15 篇路由文档<br/>过滤模糊匹配噪音"]
     M3 --> M4["读取路由文档全文"]
     M4 --> M5["parse_master_body"]
     M5 --> M6["提取 sub_docs<br/>{doc_id, book_id, namespace}"]
@@ -287,7 +287,7 @@ flowchart TD
 | 步骤 | 说明 | 并行点 |
 |------|------|--------|
 | [0] 前置 | Agent LLM 判断是否指定文档名 → 是则短路 | — |
-| [1] 总库路由 | 搜索引总库 title → LLM 挑 3-5 → 读全文 → 拿到子库 namespace | ⚡ 多组关键词并发搜 |
+| [1] 总库路由 | 搜索引总库 title → 每组关键词各挑 3-5 → 读全文 → 拿到 namespace | ⚡ 多组关键词并发搜 |
 | [2] 子库搜索 | 用 namespace 搜子库 title → 直接读全文（总库已精准定位）→ 提取 source_entries | ⚡ 多组关键词并发搜 |
 | [3] 合并去重 | 按 doc_id 去重 | — |
 | [4] 内容段提取 | 有 content_segment → 直接用；Lake → 标注「仅标题匹配」 | — |
