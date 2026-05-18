@@ -89,14 +89,15 @@ cp config/yuque-config.example.json config/yuque-config.json
 
 ### 完整配置
 
+配置文件位于 skill 目录下 `config/yuque-config.json`。
+
 ```json
 {
   "token": "语雀 API Token",
   "group": "yehuoshun",
   "default_book": { "book_id": 78276514, "namespace": "yehuoshun/index-sub-1" },
   "index_books": [
-    { "book_id": 77321523, "namespace": "yehuoshun/wwqac0" },
-    { "book_id": 51689762, "namespace": "yehuoshun/rqgc16" }
+    { "book_id": 77321523, "namespace": "yehuoshun/wwqac0" }
   ]
 }
 ```
@@ -106,7 +107,7 @@ cp config/yuque-config.example.json config/yuque-config.json
 | `token` | 语雀 API Token（必填） |
 | `group` | 语雀用户名/login（必填） |
 | `default_book` | 默认知识库，创建文档时未指定目标则使用此库 |
-| `index_books` | 索引库列表。`[0]` = 索引总库（路由层），`[1:]` = 索引子库（关键词→源文档映射） |
+| `index_books` | 索引总库。`[0]` = 索引总库（路由层），子库从总库路由文档动态发现 |
 
 ### 初始化验证
 
@@ -117,6 +118,66 @@ python3 yuque_api.py health-check
 ```
 
 输出 `all_ok: true` 表示一切正常，否则按提示创建缺失的知识库。详见 [SKILL.md#初始化流程](./SKILL.md#初始化流程)。
+
+#### 初始化流程图
+
+```mermaid
+flowchart TD
+    A["🔔 触发: 首次配置 / 检查连接 / 大量403"]
+    A --> B["YuqueAPI() 实例化"]
+    B --> C{"token + group 非空?"}
+    C -->|"❌"| C1["❌ 提示补填配置"]
+    C -->|"✅"| D["health_check()"]
+
+    D --> E["Step 1: Token 验证"]
+    E --> E1["GET /hello"]
+    E1 --> E2{"ok?"}
+    E2 -->|"❌"| E3["❌ 提示重新生成 Token → 终止"]
+    E2 -->|"✅"| F
+
+    F["Step 2: 默认知识库"] --> F1{"book_id?"}
+    F1 -->|"0/空"| F2["⏭️ 跳过"]
+    F1 -->|"有值"| F3["GET /repos/{id}"]
+    F3 --> F4{"存在?"}
+    F4 -->|"✅"| F5["✅ ok"]
+    F4 -->|"❌"| F6["⚠️ 缺失"]
+
+    F2 --> G
+    F5 --> G
+    F6 --> G
+
+    G["Step 3: 索引库列表"] --> G1["遍历 index_books[i]"]
+    G1 --> G2{"bid?"}
+    G2 -->|"0/空"| G1
+    G2 -->|"有值"| G3["GET /repos/{bid}"]
+    G3 --> G4{"存在?"}
+    G4 -->|"✅"| G5["✅ ok"]
+    G4 -->|"❌"| G6["⚠️ 缺失"]
+    G5 --> G7{"还有?"}
+    G6 --> G7
+    G7 -->|"✅"| G1
+    G7 -->|"❌"| H
+
+    H{"all_ok?"}
+    H -->|"✅"| H1["✅ 完成"]
+    H -->|"⚠️"| I["创建缺失知识库"]
+
+    I --> I1["取 role 为名称"]
+    I1 --> I2["generate_slug()"]
+    I2 --> I3["POST 创建知识库"]
+    I3 --> I4{"成功?"}
+    I4 -->|"slug冲突"| I5["换时间戳重试"]
+    I5 --> I2
+    I4 -->|"✅"| I6["回写配置"]
+    I6 --> I7{"还有?"}
+    I7 -->|"✅"| I1
+    I7 -->|"❌"| I8["二次验证 health_check()"]
+    I8 --> H1
+
+    style A fill:#ff6b6b,color:#fff
+    style H1 fill:#51cf66,color:#fff
+    style E3 fill:#ff6b6b,color:#fff
+```
 
 ### 速率限制
 
@@ -149,8 +210,8 @@ python3 yuque_api.py health-check
 yuque-ai-skill/
 ├── SKILL.md              # Skill 规范文档（AI Agent 执行指南）
 ├── README.md             # 本文件
-├── yuque_api.py          # 核心 API 封装（纯标准库，848行）
-├── yuque_search.py       # 搜索管线（两级索引+降级+跨库读取，625行）
+├── yuque_api.py          # 核心 API 封装（纯标准库，1000行）
+├── yuque_search.py       # 搜索管线（两级索引+降级+跨库读取，688行）
 ├── yuque_index.py        # 索引构建器（全量/增量，JSON格式，280行）
 ├── config/               # 配置文件目录
 │   ├── yuque-config.example.json # 配置模板
