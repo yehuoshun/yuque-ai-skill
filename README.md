@@ -240,14 +240,14 @@ flowchart TD
 
     S0 -->|"❌ 否"| S1["[1] Agent LLM 生成 3-4 组关键词"]
 
-    S1 --> M1["[1a] 搜索引总库<br/>batch_search(scope=总库ns)"]
+    S1 --> M1["[1a] ⚡ 并行搜索索引总库<br/>batch_search(多组关键词, scope=总库ns)<br/>ThreadPoolExecutor 并发搜 title"]
     M1 --> M2["命中路由文档标题列表"]
     M2 --> M3["🔸 LLM 挑 3-5 个最相关"]
     M3 --> M4["读取路由文档全文"]
     M4 --> M5["parse_master_body"]
     M5 --> M6["提取 sub_docs<br/>{doc_id, book_id, namespace}"]
 
-    M6 --> S2a["[2] 搜索引子库<br/>用 sub_docs 中的 namespace"]
+    M6 --> S2a["[2] ⚡ 并行搜索索引子库<br/>用上一步的 namespace 限定<br/>batch_search(多组关键词, scope=子库ns)"]
     S2a --> S2b["命中索引文档标题列表"]
     S2b --> S2c["🔸 LLM 挑 3-5 个最相关"]
     S2c --> S2d["读取索引文档全文"]
@@ -286,15 +286,15 @@ flowchart TD
 
 **流程说明**（先总库定位 → 再子库搜索，顺序执行）：
 
-| 步骤 | 说明 |
-|------|------|
-| [0] 前置 | Agent LLM 判断用户是否指定文档名 → 是则短路搜全库 |
-| [1] 总库路由 | 搜索引总库 → LLM 挑 3-5 → 读全文 → 拿到子库 namespace |
-| [2] 子库搜索 | 用总库拿到的 namespace 搜索引子库 → LLM 挑 3-5 → 读全文 → 提取 source_entries |
-| [3] 合并去重 | 按 doc_id 去重 |
-| [4] 内容段提取 | 有 content_segment → 直接用；Lake 卡片 → 标注「仅标题匹配」 |
-| [5] 充足判断 | LLM 判断 → 不足则跨库并发读原文 |
-| [6] 生成答案 | LLM 生成答案 + 引用出处（doc_name + doc_link） |
+| 步骤 | 说明 | 并行点 |
+|------|------|--------|
+| [0] 前置 | Agent LLM 判断是否指定文档名 → 是则短路 | — |
+| [1] 总库路由 | 搜索引总库 title → LLM 挑 3-5 → 读全文 → 拿到子库 namespace | ⚡ 多组关键词并发搜 |
+| [2] 子库搜索 | 用 namespace 搜子库 title → LLM 挑 3-5 → 读全文 → 提取 source_entries | ⚡ 多组关键词并发搜 |
+| [3] 合并去重 | 按 doc_id 去重 | — |
+| [4] 内容段提取 | 有 content_segment → 直接用；Lake → 标注「仅标题匹配」 | — |
+| [5] 充足判断 | LLM 判断 → 不足则跨库并发读原文 | — |
+| [6] 生成答案 | LLM 生成答案 + 引用出处 | — |
 
 > 📄 完整细节 → [SKILL.md#一知识库问答系统](./SKILL.md#一知识库问答系统)
 
