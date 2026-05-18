@@ -238,16 +238,16 @@ flowchart TD
     S0a --> S0b["LLM 总结答案"]
     S0b --> END["✅ 完成"]
 
-    S0 -->|"❌ 否"| S1["[1] Agent LLM 生成 3-4 组关键词"]
+    S0 -->|"❌ 否"| S1["[1] Agent LLM 多角度生成关键词 → 取并集"]
 
-    S1 --> M1["[1a] ⚡ 并行搜索索引总库<br/>batch_search(多组关键词, scope=总库ns)<br/>ThreadPoolExecutor 并发搜 title"]
+    S1 --> M1["[1a] 搜索索引总库<br/>batch_search(取并集后的一组关键词, scope=总库ns)"]
     M1 --> M2["命中路由文档标题列表"]
-    M2 --> M3["🟡 [1b] 每组关键词各挑 3-5 个最相关<br/>3组关键词 × 3-5 = 9-15 篇路由文档<br/>过滤模糊匹配噪音"]
+    M2 --> M3["🟡 [1b] LLM 挑 3-5 个最相关<br/>过滤模糊匹配噪音"]
     M3 --> M4["读取路由文档全文"]
     M4 --> M5["parse_master_body"]
     M5 --> M6["提取 sub_docs<br/>{doc_id, book_id, namespace}"]
 
-    M6 --> S2a["[2a] ⚡ 并行搜索索引子库<br/>用上一步的 namespace 限定<br/>总库已精准定位，无需标题筛选<br/>batch_search(多组关键词, scope=子库ns)"]
+    M6 --> S2a["[2a] ⚡ 搜索索引子库<br/>用 namespace 限定 · 总库已定位<br/>batch_search(关键词, scope=子库ns)"]
     S2a --> S2b["命中索引文档"]
     S2b --> S2d["[2b] 读取索引文档全文<br/>LLM 轨并发 + 超时降级保护"]
     S2d --> S2e["parse_sub_index_body"]
@@ -287,8 +287,8 @@ flowchart TD
 | 步骤 | 说明 | 并行点 |
 |------|------|--------|
 | [0] 前置 | Agent LLM 判断是否指定文档名 → 是则短路 | — |
-| [1] 总库路由 | 搜索引总库 title → 每组关键词各挑 3-5 → 读全文 → 拿到 namespace | ⚡ 多组关键词并发搜 |
-| [2] 子库搜索 | 用 namespace 搜子库 title → 直接读全文（总库已精准定位）→ 提取 source_entries | ⚡ 多组关键词并发搜 |
+| [1] 总库路由 | LLM 多角度生成 → 取并集一组 → 搜索引总库 title → 挑 3-5 → 读全文 → 拿到 namespace | 一次搜索 |
+| [2] 子库搜索 | 用 namespace 搜子库 title → 直接读全文（总库已精准定位）→ 提取 source_entries | 多 namespace 并发搜 |
 | [3] 合并去重 | 按 doc_id 去重 | — |
 | [4] 内容段提取 | 有 content_segment → 直接用；Lake → 标注「仅标题匹配」 | — |
 | [5] 充足判断 | LLM 判断 → 不足则跨库并发读原文 | — |
