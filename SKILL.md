@@ -174,34 +174,41 @@ api.health_check()
 
 ## 2. 搜索流程
 
+> 📊 流程图见 [README.md#知识库问答](./README.md#知识库问答)
+
 ```
 用户提问: "Java 面试怎么准备"
          │
          ├─[0] 前置：用户指定了文档名？
-         │      → LLM 判断用户问题中是否明确指定了具体文档名称（含引号/书名号内的名称，或"xxx这篇文档"等表述）
-         │      → 是：直接全库搜索 → 读原文 → LLM 总结（短路）
+         │      → Agent LLM 判断问题中是否明确指定了具体文档名称
+         │      → 是：direct_doc_search() → 读原文 → LLM 总结（短路）
          │      → 否：继续
          │
-         ├─[1] LLM 生成 3-4 组关键词 → batch_search 索引总库
-         │      → 命中路由文档（标题=[索引] xx）→ parse_master_body → 提取 sub_docs
-         │      → LLM 从命中标题中挑 3-5 个最相关 → 读全文
-         │      → 拿到子库索引文档的 doc_id + book_id + namespace
+         ├─[1] Agent LLM 生成 3-4 组关键词 → combined_search()
+         │      │
+         │      ├─[1a] search_master(关键词)  ←── 并行
+         │      │      batch_search 索引总库 → 读取路由文档全文
+         │      │      → parse_master_body → 提取 sub_docs
+         │      │      → 拿到子库索引文档的 doc_id/book_id/namespace
+         │      │
+         │      └─[1b] search_and_parse_sub(关键词)  ←── 并行
+         │             batch_search 索引子库（多 namespace）
+         │             → 读取索引文档全文 → parse_sub_index_body
+         │             → 提取 source_entries
          │
-         ├─[2] batch_search 索引子库（多组关键词 × 子库 namespace）
-         │      → 命中索引文档 → LLM 从命中标题中挑 3-5 个最相关
-         │      → read 全文 → parse_sub_index_body → 提取 source_entries
+         ├─[2] 合并去重（按 source doc_id）
          │
-         ├─[3] 合并去重（按 source doc_id）
-         │
-         ├─[4] 提取 content_segment
+         ├─[3] Agent LLM 提取 content_segment
          │      有内容段 → 直接送入 LLM
-         │      无内容段（Lake卡片）→ 标注"仅标题匹配" → 读取原文尝试
+         │      无内容段（Lake卡片）→ 标注"仅标题匹配" → 尝试读取原文
          │
-         ├─[5] LLM 判断 content_segment 是否足以回答
+         ├─[4] Agent LLM 判断 content_segment 是否足以回答
          │      不足 → read_source_docs_across_books（跨知识库并发读取原文）
          │
-         └─[6] LLM 生成答案 + 引用出处
+         └─[5] Agent LLM 生成答案 + 引用出处
 ```
+
+> `combined_search()` 使用 ThreadPoolExecutor 双路并行执行 search_master 和 search_and_parse_sub。读索引文档时用 LLM 轨并发公式 + 超时降级保护。
 
 ### 2.1 降级模式
 

@@ -29,7 +29,9 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from yuque_api import YuqueAPI
 
 
@@ -45,10 +47,57 @@ def _get_available_memory_mb():
     return 1024  # 默认 1GB
 
 
-def _safe_concurrency(default=5):
-    """根据可用内存计算安全并发数: clamp(default, 1, floor(mem_mb/512))，上限5"""
+def _llm_safe_concurrency(default=3):
+    """
+    LLM 轨并发数：clamp(floor(mem_mb / 1024), 1, 3)。
+
+    即：可用内存 ≥3GB→3, ≥2GB→2, <2GB→1。
+    用于索引文档读取、源文档跨库读取等 LLM 轨批量操作。
+    """
     mem = _get_available_memory_mb()
-    return max(1, min(mem // 512, default))
+    return max(1, min(mem // 1024, default))
+
+
+class LLMConcurrencyTracker:
+    """
+    LLM 轨超时降级追踪器。
+
+    连续 3 次批量读取耗时 >10s → 降 1 级并发
+    单次 >30s → 暂停（并发=0，本轮跳过）
+    """
+
+    def __init__(self):
+        self.slow_count = 0
+        self.base = _llm_safe_concurrency(3)
+        self._level = self.base
+        self.paused = False
+
+    def record_batch(self, elapsed_seconds, doc_count):
+        """记录一次批量读取的耗时，自动调整并发级别"""
+        if elapsed_seconds > 30:
+            self._level = 0
+            self.paused = True
+            return
+        if elapsed_seconds > 10:
+            self.slow_count += 1
+            if self.slow_count >= 3:
+                self._level = max(1, self._level - 1)
+                self.slow_count = 0
+        else:
+            self.slow_count = 0
+            # 恢复：如果没暂停且低于基准，逐步回升
+            if not self.paused and self._level < self.base:
+                self._level = min(self._level + 1, self.base)
+
+    def reset(self):
+        """新一轮搜索时重置"""
+        self.slow_count = 0
+        self._level = self.base
+        self.paused = False
+
+    @property
+    def workers(self):
+        return max(0, self._level)
 
 
 # ── 工具函数 ────────────────────────────────────────
@@ -147,6 +196,8 @@ class SearchPipeline:
 
     def __init__(self, api=None, config_path=None):
         self.api = api or YuqueAPI(config_path)
+        self._llm_tracker = LLMConcurrencyTracker()  # LLM 轨超时降级
+        self._sub_books_cache = None  # 动态发现的子库缓存
 
     # ── 路由：搜索索引总库 ──────────────────────────
 
@@ -183,8 +234,8 @@ class SearchPipeline:
         if not doc_ids:
             return []
 
-        # 并发读取路由文档全文（带 OOM 保护）
-        max_w = _safe_concurrency(5)
+        # 并发读取路由文档全文（带 OOM 保护，LLM 轨公式）
+        max_w = _llm_safe_concurrency(3)
         bodies = self.api.batch_get_docs(master_bid, doc_ids, max_workers=max_w)
 
         refs = []
@@ -222,6 +273,18 @@ class SearchPipeline:
 
     # ── 搜索索引子库 ────────────────────────────────
 
+    def _get_sub_namespaces(self):
+        """动态发现子库 namespace 列表（从总库路由文档），带缓存"""
+        if self._sub_books_cache is None:
+            self._sub_books_cache = self.api.discover_sub_index_books()
+        return [b["namespace"] for b in self._sub_books_cache if b.get("namespace")]
+
+    def _get_namespace_book_map(self):
+        """动态发现 namespace → book_id 映射表，带缓存"""
+        if self._sub_books_cache is None:
+            self._sub_books_cache = self.api.discover_sub_index_books()
+        return {b["namespace"]: b["book_id"] for b in self._sub_books_cache if b.get("namespace") and b.get("book_id")}
+
     def search_sub_books(self, keywords, namespaces=None):
         """
         搜索索引子库，返回命中索引文档列表。
@@ -230,7 +293,7 @@ class SearchPipeline:
             list[dict]: [{id, title, summary, namespace}, ...]
         """
         if namespaces is None:
-            namespaces = self.api.index_namespaces
+            namespaces = self._get_sub_namespaces()
         if not namespaces:
             return []
 
@@ -262,21 +325,22 @@ class SearchPipeline:
             return []
 
         # 按 book_id 分组，准备并发读取
+        ns_to_book = self._get_namespace_book_map()
         groups = {}
         for hit in hits:
-            book_id = None
-            for ib in self.api.index_books:
-                if ib.get("namespace") == hit.get("namespace"):
-                    book_id = ib.get("book_id")
-                    break
+            namespace = hit.get("namespace")
+            book_id = ns_to_book.get(namespace) if namespace else None
+            if not book_id:
+                # 尝试从 index_books[0]（总库）兜底
+                book_id = self.api.index_book_ids[0] if self.api.index_book_ids else None
             if not book_id:
                 continue
             if book_id not in groups:
                 groups[book_id] = {"doc_ids": [], "namespace": hit.get("namespace", "")}
             groups[book_id]["doc_ids"].append(hit["id"])
 
-        # 并发读取（带 OOM 保护）
-        max_w = _safe_concurrency(5)
+        # 并发读取（带 OOM 保护，LLM 轨公式）
+        max_w = _llm_safe_concurrency(3)
         all_entries = []
         for book_id, group in groups.items():
             try:
@@ -318,6 +382,9 @@ class SearchPipeline:
         """
         双路并行搜索：总库路由 + 子库直搜，合并去重。
 
+        search_master() 和 search_and_parse_sub() 并发执行，减少串行等待。
+        每次调用自动重置 LLM 轨超时降级状态。
+
         Returns:
             dict: {
                 "from_master_routes": [...],  # 总库命中的子库引用
@@ -325,8 +392,14 @@ class SearchPipeline:
                 "all_unique": [...],           # 去重合并（按 doc_id）
             }
         """
-        master_routes = self.search_master(keywords)
-        sub_entries = self.search_and_parse_sub(keywords)
+        self._llm_tracker.reset()
+
+        # 双路并行：总库路由 + 子库直搜
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            master_future = executor.submit(self.search_master, keywords)
+            sub_future = executor.submit(self.search_and_parse_sub, keywords)
+            master_routes = master_future.result()
+            sub_entries = sub_future.result()
 
         seen = set()
         all_unique = []
@@ -343,7 +416,7 @@ class SearchPipeline:
             route_groups[sub_book_id].append(sub_doc_id)
 
         if route_groups:
-            max_w = _safe_concurrency(5)
+            max_w = _llm_safe_concurrency(3)
             for book_id, doc_ids in route_groups.items():
                 try:
                     bodies = self.api.batch_get_docs(book_id, doc_ids, max_workers=max_w)
@@ -392,13 +465,13 @@ class SearchPipeline:
 
     # ── 读取源文档（跨知识库） ─────────────────────
 
-    def read_source_docs_across_books(self, refs, max_workers=5):
+    def read_source_docs_across_books(self, refs, max_workers=None):
         """
         跨知识库读取源文档全文。
 
         Args:
             refs: 源文档引用列表，每项至少含 doc_id + namespace 或 book_id
-            max_workers: 并发数
+            max_workers: 并发数（None=LLM 轨公式 + 超时降级）
 
         Returns:
             list[dict]: [{doc_id, title, body, book_id, namespace}, ...]
@@ -435,7 +508,18 @@ class SearchPipeline:
             if not book_id:
                 continue
 
-            bodies = self.api.batch_get_docs(book_id, group["doc_ids"], max_workers=max_workers)
+            # LLM 轨超时降级：暂停时跳过本轮
+            if self._llm_tracker.paused:
+                continue
+
+            workers = max_workers if max_workers is not None else self._llm_tracker.workers
+            if workers <= 0:
+                continue
+
+            t0 = time.time()
+            bodies = self.api.batch_get_docs(book_id, group["doc_ids"], max_workers=workers)
+            elapsed = time.time() - t0
+            self._llm_tracker.record_batch(elapsed, len(group["doc_ids"]))
             for doc_id, body in bodies.items():
                 if isinstance(body, dict):
                     results.append({

@@ -225,13 +225,64 @@ yuque-ai-skill/
 
 ## 知识库问答
 
-两级索引（总库路由 → 子库关键词）+ 多路并发搜索 + LLM 生成答案。纯 LLM + 语雀 API，零外部依赖。
+两级索引（总库路由 → 子库关键词）+ 双路并行搜索 + LLM 生成答案。纯 LLM + 语雀 API，零外部依赖。
 
 完整搜索管线、索引构建、搜索降级 → **[SKILL.md#一知识库问答系统](./SKILL.md#一知识库问答系统)**。
 
+#### 搜索流程
+
+```mermaid
+flowchart TD
+    Q["用户提问"] --> S0{"指定了文档名?"}
+    S0 -->|"✅ 是"| S0a["direct_doc_search()"]
+    S0a --> S0b["读原文"]
+    S0b --> S0c["LLM 总结答案"]
+    S0c --> END["✅ 完成"]
+
+    S0 -->|"❌ 否"| S1["LLM 生成 3-4 组关键词"]
+    S1 --> S2["combined_search() 双路并行"]
+
+    S2 --> S2a["search_master(关键词)"]
+    S2 --> S2b["search_and_parse_sub(关键词)"]
+
+    S2a --> S2a1["搜索引总库"]
+    S2a1 --> S2a2["读路由文档全文"]
+    S2a2 --> S2a3["parse_master_body"]
+    S2a3 --> S2a4["提取 sub_docs"]
+
+    S2b --> S2b1["搜索引子库"]
+    S2b1 --> S2b2["读索引文档全文"]
+    S2b2 --> S2b3["parse_sub_index_body"]
+    S2b3 --> S2b4["提取 source_entries"]
+
+    S2a4 --> MERGE["合并去重(按 doc_id)"]
+    S2b4 --> MERGE
+
+    MERGE --> C3["提取 content_segment"]
+    C3 --> C4{"内容段充足?"}
+    C4 -->|"✅"| C6["LLM 生成答案 + 引用"]
+    C4 -->|"❌ 不足"| C5["read_source_docs_across_books()<br/>跨库并发读原文"]
+    C5 --> C6
+    C6 --> END
+
+    MERGE --> C8{"命中数=0?"}
+    C8 -->|"✅"| D1["降级: degraded_search()<br/>无 scope 搜全库"]
+    D1 --> D2{"命中?"}
+    D2 -->|"✅"| C3
+    D2 -->|"❌"| D3["返回「未找到相关内容」"]
+
+    style S2 fill:#339af0,color:#fff
+    style MERGE fill:#fcc419,color:#333
+    style D1 fill:#ff6b6b,color:#fff
+    style END fill:#51cf66,color:#fff
 ```
-LLM 生成搜索词 → 搜总库定位子库 → 并发搜索索引子库 → 读索引全文 → LLM 生成答案 + 引用
-```
+
+**流程说明**：
+1. **前置检查**：用户明确指定文档名 → 短路直接搜
+2. **双路并行**：`search_master` 和 `search_and_parse_sub` 通过 ThreadPoolExecutor 并发执行
+3. **合并去重**：按 `doc_id` 去重，总库路由结果优先
+4. **内容段提取**：`content_segment` 充足 → 直接回答；不足 → 跨库读取原始文档全文
+5. **降级兜底**：索引命中不足 → 退至语雀全库搜索（无 scope）；仍 0 命中 → 提示用户换问法
 
 ### Python 模块快速测试
 
