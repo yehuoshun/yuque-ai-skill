@@ -88,7 +88,24 @@ cp config/yuque-config.example.json config/yuque-config.json
 
 ### 完整配置
 
-必填：`token`、`group`、`default_book`。完整字段说明 → [SKILL.md#配置](./SKILL.md#配置)。
+```json
+{
+  "token": "语雀 API Token",
+  "group": "yehuoshun",
+  "default_book": { "book_id": 78276514, "namespace": "yehuoshun/index-sub-1" },
+  "index_books": [
+    { "book_id": 77321523, "namespace": "yehuoshun/wwqac0" },
+    { "book_id": 51689762, "namespace": "yehuoshun/rqgc16" }
+  ]
+}
+```
+
+| 配置项 | 说明 |
+|--------|------|
+| `token` | 语雀 API Token（必填） |
+| `group` | 语雀用户名/login（必填） |
+| `default_book` | 默认知识库，创建文档时未指定目标则使用此库 |
+| `index_books` | 索引库列表。`[0]` = 索引总库（路由层），`[1:]` = 索引子库（关键词→源文档映射） |
 
 ### 速率限制
 

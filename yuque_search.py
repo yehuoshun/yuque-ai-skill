@@ -33,6 +33,24 @@ import urllib.parse
 from yuque_api import YuqueAPI
 
 
+def _get_available_memory_mb():
+    """获取可用内存 (MB)，用于 OOM 保护"""
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) // 1024
+    except Exception:
+        pass
+    return 1024  # 默认 1GB
+
+
+def _safe_concurrency(default=5):
+    """根据可用内存计算安全并发数: clamp(default, 1, floor(mem_mb/512))，上限5"""
+    mem = _get_available_memory_mb()
+    return max(1, min(mem // 512, default))
+
+
 # ── 工具函数 ────────────────────────────────────────
 
 def parse_master_body(body):
@@ -151,38 +169,54 @@ class SearchPipeline:
             return []
 
         results = self.api.batch_search(keywords, scope=master_ns)
-        refs = []
+        # 收集所有命中 doc_id
+        doc_ids = []
         seen = set()
-
         for query, result in results.items():
             docs = result.get("docs", []) if isinstance(result, dict) else []
             for doc in docs:
                 doc_id = doc.get("id")
-                if not doc_id or doc_id in seen:
-                    continue
-                seen.add(doc_id)
+                if doc_id and doc_id not in seen:
+                    seen.add(doc_id)
+                    doc_ids.append(doc_id)
 
-                try:
-                    body = self.api.get_doc_body(master_bid, doc_id)
-                    data = parse_master_body(body)
-                except Exception:
-                    continue
+        if not doc_ids:
+            return []
 
-                if not data or "sub_docs" not in data:
-                    continue
+        # 并发读取路由文档全文（带 OOM 保护）
+        max_w = _safe_concurrency(5)
+        bodies = self.api.batch_get_docs(master_bid, doc_ids, max_workers=max_w)
 
-                keyword = data.get("keyword", "")
-                for sd in data["sub_docs"]:
-                    sub_doc_id = sd.get("doc_id")
-                    if not sub_doc_id:
-                        continue
-                    refs.append({
-                        "keyword": keyword,
-                        "sub_doc_id": sub_doc_id,
-                        "sub_book_id": sd.get("book_id"),
-                        "sub_namespace": sd.get("namespace", ""),
-                        "sub_title": sd.get("title", ""),
-                    })
+        refs = []
+        seen_sub = set()
+        for doc_id, body in bodies.items():
+            if not body:
+                continue
+            body_text = body.get("body") or body.get("body_draft") or "" if isinstance(body, dict) else str(body)
+            # OOM 保护：单篇路由文档上限 100KB
+            if len(body_text) > 102400:
+                body_text = body_text[:102400]
+            try:
+                data = parse_master_body(body_text)
+            except Exception:
+                continue
+
+            if not data or "sub_docs" not in data:
+                continue
+
+            keyword = data.get("keyword", "")
+            for sd in data["sub_docs"]:
+                sub_doc_id = sd.get("doc_id")
+                if not sub_doc_id or sub_doc_id in seen_sub:
+                    continue
+                seen_sub.add(sub_doc_id)
+                refs.append({
+                    "keyword": keyword,
+                    "sub_doc_id": sub_doc_id,
+                    "sub_book_id": sd.get("book_id"),
+                    "sub_namespace": sd.get("namespace", ""),
+                    "sub_title": sd.get("title", ""),
+                })
 
         return refs
 
@@ -218,14 +252,17 @@ class SearchPipeline:
 
     def search_and_parse_sub(self, keywords, namespaces=None):
         """
-        搜索子库 → 读命中索引文档全文 → 解析 source_entries。
+        搜索子库 → 并发读命中索引文档全文 → 解析 source_entries。
 
         Returns:
             list[dict]: 去重后的源文档引用（按 doc_id）
         """
         hits = self.search_sub_books(keywords, namespaces)
-        all_entries = []
+        if not hits:
+            return []
 
+        # 按 book_id 分组，准备并发读取
+        groups = {}
         for hit in hits:
             book_id = None
             for ib in self.api.index_books:
@@ -234,19 +271,36 @@ class SearchPipeline:
                     break
             if not book_id:
                 continue
+            if book_id not in groups:
+                groups[book_id] = {"doc_ids": [], "namespace": hit.get("namespace", "")}
+            groups[book_id]["doc_ids"].append(hit["id"])
 
+        # 并发读取（带 OOM 保护）
+        max_w = _safe_concurrency(5)
+        all_entries = []
+        for book_id, group in groups.items():
             try:
-                body = self.api.get_doc_body(book_id, hit["id"])
-                entries = parse_sub_index_body(body)
-                # 补全缺失的字段
+                bodies = self.api.batch_get_docs(book_id, group["doc_ids"], max_workers=max_w)
+            except Exception:
+                continue
+            for doc_id, body in bodies.items():
+                if not body:
+                    continue
+                body_text = body.get("body") or body.get("body_draft") or "" if isinstance(body, dict) else str(body)
+                # OOM 保护：单篇索引文档上限 200KB
+                if len(body_text) > 204800:
+                    body_text = body_text[:204800]
+                try:
+                    entries = parse_sub_index_body(body_text)
+                except Exception:
+                    continue
+                # 补全缺失字段
                 for e in entries:
                     if "book_id" not in e:
                         e.setdefault("book_id", book_id)
                     if "namespace" not in e:
-                        e.setdefault("namespace", hit.get("namespace", ""))
+                        e.setdefault("namespace", group.get("namespace", ""))
                 all_entries.extend(entries)
-            except Exception:
-                continue
 
         # 按 doc_id 去重
         seen = set()
@@ -277,28 +331,45 @@ class SearchPipeline:
         seen = set()
         all_unique = []
 
-        # 1) 总库路由 → 读子库索引文档 → 解析 source_entries
+        # 1) 总库路由 → 按 book_id 分组并发读子库索引文档 → 解析 source_entries
+        route_groups = {}
         for route in master_routes:
             sub_book_id = route.get("sub_book_id")
             sub_doc_id = route.get("sub_doc_id")
             if not sub_book_id or not sub_doc_id:
                 continue
-            try:
-                body = self.api.get_doc_body(sub_book_id, sub_doc_id)
-                entries = parse_sub_index_body(body)
-                for e in entries:
-                    did = e.get("doc_id")
-                    if did and did not in seen:
-                        seen.add(did)
-                        all_unique.append({
-                            "doc_id": did,
-                            "title": e.get("title", ""),
-                            "namespace": e.get("namespace", ""),
-                            "book_id": e.get("book_id"),
-                            "source": "master_route",
-                        })
-            except Exception:
-                continue
+            if sub_book_id not in route_groups:
+                route_groups[sub_book_id] = []
+            route_groups[sub_book_id].append(sub_doc_id)
+
+        if route_groups:
+            max_w = _safe_concurrency(5)
+            for book_id, doc_ids in route_groups.items():
+                try:
+                    bodies = self.api.batch_get_docs(book_id, doc_ids, max_workers=max_w)
+                except Exception:
+                    continue
+                for doc_id, body in bodies.items():
+                    if not body:
+                        continue
+                    body_text = body.get("body") or body.get("body_draft") or "" if isinstance(body, dict) else str(body)
+                    if len(body_text) > 204800:
+                        body_text = body_text[:204800]
+                    try:
+                        entries = parse_sub_index_body(body_text)
+                    except Exception:
+                        continue
+                    for e in entries:
+                        did = e.get("doc_id")
+                        if did and did not in seen:
+                            seen.add(did)
+                            all_unique.append({
+                                "doc_id": did,
+                                "title": e.get("title", ""),
+                                "namespace": e.get("namespace", ""),
+                                "book_id": e.get("book_id"),
+                                "source": "master_route",
+                            })
 
         # 2) 子库直搜 → 补充未覆盖的
         for e in sub_entries:
@@ -349,15 +420,18 @@ class SearchPipeline:
             groups[key]["doc_ids"].append(doc_id)
 
         results = []
+        ns_cache = {}  # namespace → book_id 缓存，避免重复 API 调用
         for key, group in groups.items():
             book_id = group["book_id"]
             namespace = group["namespace"]
 
             if not book_id and namespace:
-                try:
-                    book_id = self.api.resolve_book_id(namespace)
-                except Exception:
-                    continue
+                if namespace not in ns_cache:
+                    try:
+                        ns_cache[namespace] = self.api.resolve_book_id(namespace)
+                    except Exception:
+                        ns_cache[namespace] = None
+                book_id = ns_cache[namespace]
             if not book_id:
                 continue
 
@@ -407,7 +481,7 @@ class SearchPipeline:
             keywords: 搜索词列表
 
         Returns:
-            list[dict]: [{id, title, summary, url}, ...]
+            list[dict]: [{id, title, summary, url, doc_id, book_id, namespace}, ...]
         """
         results = self.api.batch_search(keywords)  # 不传 scope = 搜全库
         all_docs = {}
@@ -416,12 +490,17 @@ class SearchPipeline:
             for doc in docs:
                 doc_id = doc.get("id")
                 if doc_id and doc_id not in all_docs:
+                    target = doc.get("target", {})
+                    book = target.get("book", {})
                     all_docs[doc_id] = {
                         "id": doc_id,
                         "title": doc.get("title", ""),
                         "summary": doc.get("summary", ""),
                         "url": doc.get("url", ""),
-                        "target": doc.get("target", {}),
+                        "doc_id": target.get("id") or doc_id,
+                        "book_id": target.get("book_id") or book.get("id"),
+                        "namespace": book.get("namespace", ""),
+                        "target": target,
                     }
         return list(all_docs.values())
 

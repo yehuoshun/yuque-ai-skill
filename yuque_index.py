@@ -71,7 +71,8 @@ class IndexBuilder:
                 except (ValueError, TypeError):
                     changed.append(doc)
             else:
-                changed.append(doc)
+                # 无 updated_at 字段，跳过（无法判断是否变更）
+                pass
         return changed
 
     def read_doc_for_indexing(self, book_id, doc_id):
@@ -115,7 +116,7 @@ class IndexBuilder:
         """
         master_bid = self.api.index_master_book_id
         if not master_bid:
-            raise ValueError("未配置 index_master_book")
+            raise ValueError("未配置 index_books（索引总库）")
 
         body = json.dumps({"keyword": keyword, "sub_docs": sub_docs}, ensure_ascii=False, indent=2)
         title = f"[索引] {keyword}"
@@ -142,14 +143,14 @@ class IndexBuilder:
         if not sub_book_id:
             raise ValueError("未配置 index_books")
 
-        result = self.api.search(f"[索引] {keyword} (1)", scope=sub_ns)
+        result = self.api.search(f"[索引] {keyword}", scope=sub_ns)
         docs = result.get("docs", []) if isinstance(result, dict) else []
         for d in docs:
             if keyword in d.get("title", ""):
                 return {"doc_id": d["id"], "is_new": False}
 
         body = json.dumps({"keyword": keyword, "source_entries": []}, ensure_ascii=False, indent=2)
-        doc = self.api.create_doc(sub_book_id, f"[索引] {keyword} (1)", body)
+        doc = self.api.create_doc(sub_book_id, f"[索引] {keyword}", body)
         doc_id = doc["id"]
         try:
             self.api.append_to_toc(sub_book_id, doc_id)

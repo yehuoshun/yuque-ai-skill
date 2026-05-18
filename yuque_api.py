@@ -127,11 +127,8 @@ class YuqueAPI:
         self.token = cfg["token"]
         self.group = cfg["group"]
         self.default_book = cfg.get("default_book", {})
-        self.index_master_book = cfg.get("index_master_book", {})
+        # index_books[0] = 索引总库，index_books[1:] = 索引子库
         self.index_books = cfg.get("index_books", [])
-        self.search_cache_enabled = cfg.get("search_cache_enabled", False)
-        self.incremental_index_enabled = cfg.get("incremental_index_enabled", False)
-        self.search_report_enabled = cfg.get("search_report_enabled", False)
 
         self._remaining = None   # 最近一次 X-RateLimit-Remaining
         self._ssl_ctx = ssl.create_default_context()
@@ -156,6 +153,8 @@ class YuqueAPI:
         Raises:
             YuqueError 及其子类
         """
+        self._check_rate_limit()
+
         url = self.BASE + path
         if params:
             qs = urllib.parse.urlencode(params, doseq=True)
@@ -172,16 +171,36 @@ class YuqueAPI:
             body_bytes = json.dumps(data, ensure_ascii=False).encode("utf-8")
             headers["Content-Length"] = str(len(body_bytes))
 
-        req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
-
-        try:
-            resp = urllib.request.urlopen(req, timeout=timeout, context=self._ssl_ctx)
-        except urllib.error.HTTPError as e:
-            return self._handle_http_error(e)
-        except urllib.error.URLError as e:
-            raise YuqueError(-1, f"网络错误: {e.reason}") from e
-        except Exception as e:
-            raise YuqueError(-1, f"请求异常: {e}") from e
+        for attempt in range(4):  # 1 次正常 + 3 次重试
+            req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
+            try:
+                resp = urllib.request.urlopen(req, timeout=timeout, context=self._ssl_ctx)
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < 3:
+                    remaining = e.headers.get("X-RateLimit-Remaining") if hasattr(e, 'headers') else None
+                    if remaining is not None:
+                        try:
+                            self._remaining = int(remaining)
+                        except (ValueError, TypeError):
+                            pass
+                    if self._remaining is not None and self._remaining > 0:
+                        time.sleep(1)  # QPS 突发，等 1s 重试
+                        continue
+                    elif self._remaining is not None and self._remaining == 0:
+                        self._check_rate_limit()  # 小时配额耗尽，等整点
+                        continue
+                    else:
+                        time.sleep(1)  # 无法判断，保守等 1s
+                        continue
+                return self._handle_http_error(e)
+            except urllib.error.URLError as e:
+                raise YuqueError(-1, f"网络错误: {e.reason}") from e
+            except Exception as e:
+                raise YuqueError(-1, f"请求异常: {e}") from e
+        else:
+            # 4 次全部失败（429 耗尽重试次数）
+            raise YuqueRateLimitError(429, "请求过频，重试次数已耗尽")
 
         # 记录速率信息
         remaining = resp.getheader("X-RateLimit-Remaining")
@@ -507,7 +526,11 @@ class YuqueAPI:
             "html": html_val,
             "abstract": abstract_val,
         }
-        return self._request("PUT", f"/notes/{note_id}", data=data)
+        result = self._request("PUT", f"/notes/{note_id}", data=data)
+        # 小记更新返回结构为 {data: {data: {...}}}，提取内层 data
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result
 
     def delete_note(self, note_id):
         """
@@ -622,17 +645,15 @@ class YuqueAPI:
         if len(all_docs) < 100:
             return all_docs
 
-        # 并发拉后续分页，直到某页不足 100
-        page = 1
-        all_offsets = []
+        # 顺序拉后续分页，直到某页不足 100
+        offset = 100
         while True:
-            offset = page * 100
             page_result = self.list_docs(book_id, offset=offset, limit=100)
             page_docs = list(page_result) if isinstance(page_result, list) else []
             all_docs.extend(page_docs)
             if len(page_docs) < 100:
                 break
-            page += 1
+            offset += 100
 
         return all_docs
 
@@ -740,18 +761,22 @@ class YuqueAPI:
 
     @property
     def index_master_book_id(self):
-        return self.index_master_book.get("book_id") if self.index_master_book else None
+        """索引总库 ID（index_books 第一个元素）"""
+        return self.index_books[0].get("book_id") if self.index_books else None
 
     @property
     def index_master_namespace(self):
-        return self.index_master_book.get("namespace") if self.index_master_book else None
+        """索引总库 namespace（index_books 第一个元素）"""
+        return self.index_books[0].get("namespace") if self.index_books else None
 
     @property
     def index_book_ids(self):
+        """所有索引库的 book_id 列表（含总库）"""
         return [b.get("book_id") for b in self.index_books if b.get("book_id")]
 
     @property
     def index_namespaces(self):
+        """所有索引库的 namespace 列表（含总库）"""
         return [b.get("namespace") for b in self.index_books if b.get("namespace")]
 
 

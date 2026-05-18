@@ -2,6 +2,7 @@
   "token": "在此填入语雀 API Token",
   "group": "在此填入语雀用户名",
   "default_book": { "book_id": 0, "namespace": "" },
-  "index_master_book": { "book_id": 0, "namespace": "" },
-  "index_books": [{ "book_id": 0, "namespace": "" }]
+  "index_books": [
+    { "book_id": 0, "namespace": "" }
+  ]
 }
