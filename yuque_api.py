@@ -36,6 +36,7 @@
 
 import json
 import os
+import re
 import time
 import urllib.request
 import urllib.error
@@ -124,8 +125,12 @@ class YuqueAPI:
 
     def __init__(self, config_path=None):
         cfg = load_config(config_path)
-        self.token = cfg["token"]
-        self.group = cfg["group"]
+        self.token = cfg.get("token")
+        self.group = cfg.get("group")
+        if not self.token:
+            raise ValueError("配置缺失：token 为空，请在 yuque-config.json 中填入语雀 API Token")
+        if not self.group:
+            raise ValueError("配置缺失：group 为空，请在 yuque-config.json 中填入语雀用户名")
         self.default_book = cfg.get("default_book", {})
         # index_books[0] = 索引总库，index_books[1:] = 索引子库
         self.index_books = cfg.get("index_books", [])
@@ -754,8 +759,88 @@ class YuqueAPI:
         return repo.get("id") if repo else None
 
     def validate_token(self):
-        """验证 Token 有效性，返回 user 信息或抛出异常"""
-        return self.hello()
+        """验证 Token 有效性，返回结构化结果"""
+        try:
+            result = self.hello()
+            user_msg = result.get("message", "unknown") if isinstance(result, dict) else str(result)
+            return {"ok": True, "message": user_msg}
+        except YuqueAuthError as e:
+            return {"ok": False, "error": f"Token 无效：{e}"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def health_check(self):
+        """
+        批量健康检查：Token 有效性 + 所有配置知识库的存在性。
+
+        Returns:
+            dict: {
+                "token": {"ok": True, "message": "..."},
+                "repos": {
+                    "default_book": {"ok": True, "name": "...", "doc_count": N, ...},
+                    "index_books[0]": {...},
+                    ...
+                },
+                "all_ok": True/False
+            }
+        """
+        results = {"token": None, "repos": {}, "all_ok": True}
+
+        # 1. Token 验证
+        token_result = self.validate_token()
+        results["token"] = token_result
+        if not token_result["ok"]:
+            results["all_ok"] = False
+            return results
+
+        # 2. 默认知识库
+        if self.default_book_id:
+            r = self._check_repo_health(self.default_book_id, self.default_namespace, "默认知识库")
+            results["repos"]["default_book"] = r
+            if not r["ok"]:
+                results["all_ok"] = False
+
+        # 3. 索引库列表
+        for i, ib in enumerate(self.index_books):
+            bid = ib.get("book_id")
+            ns = ib.get("namespace", "")
+            role = "索引总库" if i == 0 else f"索引子库 #{i}"
+            label = f"index_books[{i}]"
+            r = self._check_repo_health(bid, ns, role)
+            results["repos"][label] = r
+            if not r["ok"]:
+                results["all_ok"] = False
+
+        return results
+
+    def _check_repo_health(self, book_id, namespace, role):
+        """检查单个知识库是否存在"""
+        try:
+            repo = self._request("GET", f"/repos/{book_id}")
+            return {
+                "ok": True,
+                "name": repo.get("name", "?"),
+                "doc_count": repo.get("items_count", 0),
+                "namespace": namespace,
+                "role": role,
+            }
+        except YuqueNotFoundError:
+            return {"ok": False, "error": "知识库不存在", "book_id": book_id, "namespace": namespace, "role": role}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "book_id": book_id, "namespace": namespace, "role": role}
+
+    @staticmethod
+    def generate_slug(name):
+        """
+        根据名称生成语雀知识库 slug。
+
+        规则：转小写 → 非字母数字替换为连字符 → 去重连字符 → 追加时间戳防重复
+        示例："Java面试题库" → "java-1715500800"
+        """
+        base = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+        if not base:
+            base = "repo"
+        return f"{base}-{int(time.time())}"
 
     @property
     def default_book_id(self):
@@ -795,8 +880,9 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("用法: python yuque_api.py <命令> [参数...]")
-        print("命令: hello | list-repos | list-docs <book_id> | get-doc <book_id> <doc_id>")
+        print("命令: hello | health-check | list-repos | list-docs <book_id> | get-doc <book_id> <doc_id>")
         print("      search <query> [scope] | list-notes | export <book_id> [output_dir]")
+        print("      generate-slug <名称>")
         sys.exit(0)
 
     cmd = sys.argv[1]
@@ -805,6 +891,14 @@ if __name__ == "__main__":
         if cmd == "hello":
             result = api.hello()
             print(json.dumps(result, ensure_ascii=False, indent=2))
+
+        elif cmd == "health-check":
+            result = api.health_check()
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+
+        elif cmd == "generate-slug":
+            name = sys.argv[2]
+            print(api.generate_slug(name))
 
         elif cmd == "list-repos":
             repos = api.list_repos()
