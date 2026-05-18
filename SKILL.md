@@ -71,7 +71,7 @@ for label, r in health["repos"].items():
     if r["ok"]:
         continue
 
-    # 取角色名作为知识库名称（去掉 health_check 内部附加的 #N 索引号）
+    # 取角色名作为知识库名称（可通过修改 role 值自定义。去掉 health_check 内部附加的 #N 索引号）
     name = r["role"].split(" #")[0]
     slug = api.generate_slug(name)
 

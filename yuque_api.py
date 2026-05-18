@@ -796,7 +796,7 @@ class YuqueAPI:
 
         # 2. 默认知识库
         if self.default_book_id:
-            r = self._check_repo_health(self.default_book_id, self.default_namespace, "默认知识库")
+            r = self._check_repo_health(self.default_book_id, self.default_namespace, f"{self.group} 默认知识库")
             results["repos"]["default_book"] = r
             if not r["ok"]:
                 results["all_ok"] = False
@@ -807,7 +807,7 @@ class YuqueAPI:
             if not bid:  # 跳过 book_id=0 或 None（未配置）
                 continue
             ns = ib.get("namespace", "")
-            role = "索引总库" if i == 0 else f"索引子库 #{i}"
+            role = f"{self.group} 索引总库" if i == 0 else f"{self.group} 索引子库 #{i}"
             label = f"index_books[{i}]"
             r = self._check_repo_health(bid, ns, role)
             results["repos"][label] = r
