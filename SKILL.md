@@ -183,8 +183,9 @@ api.health_check()
          │      → 否：继续
          │
          ├─[1] LLM 生成 3-4 组关键词 → batch_search 索引总库
-         │      → 命中路由文档（标题=[索引] xx）→ parse_master_body → 提取 sub_docs
+         │      → 命中路由文档标题（标题=[索引] xx）
          │      → LLM 从命中标题中挑 3-5 个最相关 → 读全文
+         │      → parse_master_body → 提取 sub_docs
          │      → 拿到子库索引文档的 doc_id + book_id + namespace
          │
          ├─[2] batch_search 索引子库（多组关键词 × 子库 namespace，总库已精准定位无需筛选）
