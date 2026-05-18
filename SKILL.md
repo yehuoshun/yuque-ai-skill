@@ -56,7 +56,7 @@ api.health_check() → 返回 {token: {ok, message}, repos: {...}, all_ok}
 slug = api.generate_slug("名称")          # → "java-1715500800"
 repo = api.create_repo("名称", slug)      # → {id, slug, ...}
 api.update_config({                        # 回写配置文件
-    "default_book": {"book_id": repo["id"], "namespace": f"{group}/{slug}"}
+    "default_book": {"book_id": repo["id"], "namespace": f"{api.group}/{slug}"}
 })
 ```
 
@@ -67,10 +67,27 @@ api.update_config({                        # 回写配置文件
 ```python
 api = YuqueAPI()
 health = api.health_check()
-if not health["all_ok"]:
-    for label, r in health["repos"].items():
-        if not r["ok"]:
-            print(f"⚠️ {label} ({r['role']}) 不存在，需要创建")
+
+# Token 无效
+if not health["token"]["ok"]:
+    print(f"❌ Token 无效：{health['token']['error']}")
+    print("请到 https://www.yuque.com/settings/tokens 重新生成")
+    return
+
+# 知识库缺失：创建并回写配置
+for label, r in health["repos"].items():
+    if not r["ok"]:
+        slug = api.generate_slug(r["role"])
+        repo = api.create_repo(r["role"], slug)
+        entry = {"book_id": repo["id"], "namespace": f"{api.group}/{slug}"}
+        if label == "default_book":
+            api.update_config({"default_book": entry})
+        else:
+            # index_books[n]：定位索引位置，更新后整体写回列表
+            idx = int(label[12:-1])  # "index_books[0]" → 0
+            api.index_books[idx] = entry
+            api.update_config({"index_books": api.index_books})
+        print(f"✅ 已创建 {r['role']} ({repo['id']})")
 ```
 
 ## 调用约定
