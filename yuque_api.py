@@ -124,6 +124,7 @@ class YuqueAPI:
     BASE = "https://www.yuque.com/api/v2"
 
     def __init__(self, config_path=None):
+        self._config_path = config_path  # 保存路径，供 update_config 回写
         cfg = load_config(config_path)
         self.token = cfg.get("token")
         self.group = cfg.get("group")
@@ -803,6 +804,8 @@ class YuqueAPI:
         # 3. 索引库列表
         for i, ib in enumerate(self.index_books):
             bid = ib.get("book_id")
+            if not bid:  # 跳过 book_id=0 或 None（未配置）
+                continue
             ns = ib.get("namespace", "")
             role = "索引总库" if i == 0 else f"索引子库 #{i}"
             label = f"index_books[{i}]"
@@ -841,6 +844,31 @@ class YuqueAPI:
         if not base:
             base = "repo"
         return f"{base}-{int(time.time())}"
+
+    def _resolve_config_path(self):
+        """解析配置文件路径（优先用户传入，否则自动查找）"""
+        return self._config_path or _find_config()
+
+    def update_config(self, updates):
+        """
+        更新配置文件中的字段并写回磁盘。
+
+        Args:
+            updates: dict，要合并到配置文件中的字段
+
+        示例：
+            api.update_config({"default_book": {"book_id": 123, "namespace": "user/slug"}})
+        """
+        path = self._resolve_config_path()
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg.update(updates)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        # 同步内存中的配置
+        for k, v in updates.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
 
     @property
     def default_book_id(self):

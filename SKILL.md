@@ -53,12 +53,14 @@ api.health_check() → 返回 {token: {ok, message}, repos: {...}, all_ok}
 ### 创建缺失知识库
 
 ```
-api.generate_slug("名称") → 生成 slug（小写化 + 连字符 + 时间戳）
-api.create_repo("名称", slug) → 创建知识库
-→ 更新 config/yuque-config.json 中对应的 book_id 和 namespace
+slug = api.generate_slug("名称")          # → "java-1715500800"
+repo = api.create_repo("名称", slug)      # → {id, slug, ...}
+api.update_config({                        # 回写配置文件
+    "default_book": {"book_id": repo["id"], "namespace": f"{group}/{slug}"}
+})
 ```
 
-> 创建后必须回写配置文件，否则下次启动仍然报缺失。
+> `update_config()` 同时更新磁盘文件和内存配置，重启后生效。
 
 ### 使用示例
 
