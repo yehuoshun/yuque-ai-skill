@@ -187,9 +187,8 @@ api.health_check()
          │      → LLM 从命中标题中挑 3-5 个最相关 → 读全文
          │      → 拿到子库索引文档的 doc_id + book_id + namespace
          │
-         ├─[2] batch_search 索引子库（多组关键词 × 子库 namespace）
-         │      → 命中索引文档 → LLM 从命中标题中挑 3-5 个最相关
-         │      → read 全文 → parse_sub_index_body → 提取 source_entries
+         ├─[2] batch_search 索引子库（多组关键词 × 子库 namespace，总库已精准定位无需筛选）
+         │      → 命中索引文档 → read 全文 → parse_sub_index_body → 提取 source_entries
          │
          ├─[3] 合并去重（按 source doc_id）
          │
@@ -255,7 +254,7 @@ LLM 生成搜索词 → batch_search（无 scope）→ 语雀原生全库搜索
 输出 JSON：{"selected": ["标题A", "标题B"]}
 ```
 
-> 索引管线两处使用：总库命中后挑路由文档、子库命中后挑索引文档。
+> 仅用于总库路由：总库命中后挑最相关的路由文档。子库有总库精准定位的 namespace/doc_id，无需筛选。
 
 ### 3.3 答案生成
 
