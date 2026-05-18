@@ -622,21 +622,18 @@ class YuqueAPI:
         if len(all_docs) < 100:
             return all_docs
 
-        # 并发拉后续分页
-        total_pages = (len(all_docs) + 99) // 100 + 1  # 粗略估计
-        offsets = list(range(100, total_pages * 100, 100))
+        # 并发拉后续分页，直到某页不足 100
+        page = 1
+        all_offsets = []
+        while True:
+            offset = page * 100
+            page_result = self.list_docs(book_id, offset=offset, limit=100)
+            page_docs = list(page_result) if isinstance(page_result, list) else []
+            all_docs.extend(page_docs)
+            if len(page_docs) < 100:
+                break
+            page += 1
 
-        def _fetch_page(offset):
-            result = self.list_docs(book_id, offset=offset, limit=100)
-            return list(result) if isinstance(result, list) else []
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_fetch_page, o) for o in offsets]
-            for future in as_completed(futures):
-                try:
-                    all_docs.extend(future.result())
-                except YuqueError:
-                    pass
         return all_docs
 
     # ── 导出 ───────────────────────────────────────
