@@ -158,18 +158,21 @@ class IndexBuilder:
 
     # ── 写入索引总库（JSON 格式） ──────────────────
 
-    def write_master_entry(self, keyword, synonyms, source_doc_id, source_title, source_url):
+    def write_master_entry(self, keyword, sub_docs):
         """
-        在索引总库中创建一条索引条目。
+        在索引总库中创建一条路由文档（Format A）。
 
         格式:
         {
-          "type": "index_entry",
           "keyword": "Python",
-          "synonyms": ["py", "python3"],
-          "source_doc": {"id": 123, "title": "...", "url": "..."},
-          "updated_at": "2026-05-18T10:00:00+08:00"
+          "sub_docs": [
+            {"title": "[索引] Python (1)", "doc_id": 123, "book_id": 456, "namespace": "group/slug"}
+          ]
         }
+
+        Args:
+            keyword: 关键词
+            sub_docs: 子库引用列表 [{title, doc_id, book_id, namespace}, ...]
 
         Returns:
             int: 创建的文档 ID
@@ -178,30 +181,21 @@ class IndexBuilder:
         if not master_bid:
             raise ValueError("未配置 index_master_book")
 
-        now = datetime.now(TZ_SHANGHAI).isoformat()
         body = json.dumps({
-            "type": "index_entry",
             "keyword": keyword,
-            "synonyms": synonyms,
-            "source_doc": {
-                "id": source_doc_id,
-                "title": source_title,
-                "url": source_url,
-            },
-            "updated_at": now,
+            "sub_docs": sub_docs,
         }, ensure_ascii=False, indent=2)
 
-        # 文档标题用 keyword + 源文档标题前30字
-        title = f"{keyword} → {source_title[:30]}"
+        # 标题: [索引] keyword
+        title = f"[索引] {keyword}"
 
         doc = self.api.create_doc(master_bid, title, body)
         doc_id = doc["id"]
 
-        # 挂载到目录
         try:
             self.api.append_to_toc(master_bid, doc_id)
         except Exception:
-            pass  # TOC 失败不阻止，手动拖入即可
+            pass
 
         return doc_id
 
@@ -223,11 +217,9 @@ class IndexBuilder:
 
     # ── 写入索引子库（Markdown 格式） ──────────────
 
-    def find_or_create_sub_index_doc(self, keyword, title_prefix="[索引]"):
+    def find_or_create_sub_index_doc(self, keyword):
         """
-        查找或创建关键词对应的索引子库文档。
-
-        先搜索该关键词的索引文档是否存在，不存在则创建。
+        查找或创建关键词对应的索引子库文档（JSON 格式）。
 
         Returns:
             dict: {doc_id, is_new}
@@ -243,16 +235,15 @@ class IndexBuilder:
         if not sub_book_id:
             raise ValueError("未配置 index_books")
 
-        # 搜索是否已有该关键词的索引
-        doc_title = f"{title_prefix} {keyword} (1)"
+        doc_title = f"[索引] {keyword} (1)"
         result = self.api.search(doc_title, scope=sub_ns)
         docs = result.get("docs", []) if isinstance(result, dict) else []
         for d in docs:
             if keyword in d.get("title", ""):
                 return {"doc_id": d["id"], "is_new": False}
 
-        # 不存在，创建
-        body = f"# {title_prefix} {keyword} (1)\n\n本索引包含所有与「{keyword}」相关的文档。\n\n---\n\n## 文档索引\n\n"
+        # 创建新的空索引文档
+        body = json.dumps({"keyword": keyword, "source_entries": []}, ensure_ascii=False, indent=2)
         doc = self.api.create_doc(sub_book_id, doc_title, body)
         doc_id = doc["id"]
         try:
@@ -263,11 +254,7 @@ class IndexBuilder:
 
     def append_sub_index_entries(self, sub_doc_id, entries):
         """
-        向索引子库文档追加源文档条目。
-
-        Args:
-            sub_doc_id: 索引子库文档 ID
-            entries: 条目列表 [{title, doc_id, book_id, namespace, slug, keywords, doc_type}, ...]
+        向索引子库文档追加源文档条目（JSON 格式）。
         """
         sub_book_id = None
         for ib in self.api.index_books:
@@ -277,38 +264,39 @@ class IndexBuilder:
         if not sub_book_id:
             raise ValueError("未配置 index_books")
 
-        # 读取当前索引文档
+        from yuque_search import parse_sub_index_body
         current = self.api.get_doc_body(sub_book_id, sub_doc_id)
+        existing = parse_sub_index_body(current)
 
-        # 构建新条目块
-        new_blocks = []
-        for e in entries:
-            block = f"""### {e.get('title', '无标题')}
-- **关键词**: {e.get('keywords', '')}
-- **源文档ID**: {e.get('doc_id', '')}
-- **源知识库ID**: {e.get('book_id', '')}
-- **Namespace**: {e.get('namespace', '')}
-- **Slug**: {e.get('slug', '')}
-- **类型**: {e.get('doc_type', '文档')}
+        # 去重合并
+        seen_ids = {e.get("doc_id") for e in existing if e.get("doc_id")}
+        new_entries = [e for e in entries if e.get("doc_id") not in seen_ids]
+        all_entries = existing + new_entries
 
-"""
-            new_blocks.append(block)
+        # 重建
+        keyword = ""
+        try:
+            data = json.loads(current.strip())
+            keyword = data.get("keyword", "")
+        except Exception:
+            pass
 
-        # 追加到正文
-        new_body = current.rstrip() + "\n" + "".join(new_blocks)
-
-        # 更新标题中的统计数
-        import re
-        count = len(entries) + (current.count("### ") if current else 0)
-        new_body = re.sub(r'^#\s*(\[索引\]\s*\S+)\s*\(\d+\)', f'# \\1 ({count})', new_body)
-
-        self.api.update_doc(sub_book_id, sub_doc_id, body=new_body)
+        body = json.dumps({"keyword": keyword, "source_entries": all_entries}, ensure_ascii=False, indent=2)
+        title = f"[索引] {keyword} ({len(all_entries)})"
+        self.api.update_doc(sub_book_id, sub_doc_id, title=title, body=body)
 
     def rebuild_sub_index_doc(self, keyword, entries):
         """
-        重建索引子库文档（全量替换）。
+        重建索引子库文档（全量替换，JSON 格式）。
 
-        如果已存在该关键词的索引文档，全量更新；不存在则创建。
+        JSON 格式:
+        {
+          "keyword": "Python",
+          "source_entries": [
+            {"doc_id": 123, "book_id": 456, "title": "...", "namespace": "...",
+             "content_segment": "...", "keywords": "...", "slug": "...", "doc_type": "..."}
+          ]
+        }
         """
         sub_book_id = None
         for ib in self.api.index_books:
@@ -318,23 +306,15 @@ class IndexBuilder:
         if not sub_book_id:
             raise ValueError("未配置 index_books")
 
-        # 构建完整文档
         count = len(entries)
-        body = f"# [索引] {keyword} ({count})\n\n本索引包含所有与「{keyword}」相关的文档。\n\n---\n\n## 文档索引\n\n"
-
-        for e in entries:
-            body += f"""### {e.get('title', '无标题')}
-- **关键词**: {e.get('keywords', '')}
-- **源文档ID**: {e.get('doc_id', '')}
-- **源知识库ID**: {e.get('book_id', '')}
-- **Namespace**: {e.get('namespace', '')}
-- **Slug**: {e.get('slug', '')}
-- **类型**: {e.get('doc_type', '文档')}
-
-"""
+        body = json.dumps({
+            "keyword": keyword,
+            "source_entries": entries,
+        }, ensure_ascii=False, indent=2)
 
         # 查找已存在的索引文档
-        result = self.api.search(f"[索引] {keyword}", scope=self.api.index_namespaces[0] if self.api.index_namespaces else None)
+        ns = self.api.index_namespaces[0] if self.api.index_namespaces else None
+        result = self.api.search(f"[索引] {keyword}", scope=ns) if ns else {"docs": []}
         docs = result.get("docs", []) if isinstance(result, dict) else []
         existing = None
         for d in docs:
@@ -342,11 +322,12 @@ class IndexBuilder:
                 existing = d
                 break
 
+        title = f"[索引] {keyword} ({count})"
         if existing:
-            self.api.update_doc(sub_book_id, existing["id"], title=f"[索引] {keyword} ({count})", body=body)
+            self.api.update_doc(sub_book_id, existing["id"], title=title, body=body)
             return {"doc_id": existing["id"], "is_new": False}
         else:
-            doc = self.api.create_doc(sub_book_id, f"[索引] {keyword} ({count})", body)
+            doc = self.api.create_doc(sub_book_id, title, body)
             doc_id = doc["id"]
             try:
                 self.api.append_to_toc(sub_book_id, doc_id)
