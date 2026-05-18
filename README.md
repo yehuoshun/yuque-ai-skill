@@ -108,6 +108,16 @@ cp config/yuque-config.example.json config/yuque-config.json
 | `default_book` | 默认知识库，创建文档时未指定目标则使用此库 |
 | `index_books` | 索引库列表。`[0]` = 索引总库（路由层），`[1:]` = 索引子库（关键词→源文档映射） |
 
+### 初始化验证
+
+配置完成后运行健康检查，一次性验证 Token + 所有知识库：
+
+```bash
+python3 yuque_api.py health-check
+```
+
+输出 `all_ok: true` 表示一切正常，否则按提示创建缺失的知识库。详见 [SKILL.md#初始化流程](./SKILL.md#初始化流程)。
+
 ### 速率限制
 
 | 限制项 | 上限 |

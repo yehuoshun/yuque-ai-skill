@@ -54,45 +54,51 @@ api.health_check() → 返回 {token: {ok, message/error}, repos: {label: {ok, n
 
 > ⚠️ 语雀 API 无权限查询端点，Token 有效不代表权限齐全。缺 `repo:read`/`doc:read` 时后续操作会 403，Agent 需在 403 响应时提示用户检查 Token 权限范围。
 
-### 创建缺失知识库
-
-```
-slug = api.generate_slug("名称")          # → "java-1715500800"
-repo = api.create_repo("名称", slug)      # → {id, slug, ...}
-api.update_config({                        # 回写配置文件
-    "default_book": {"book_id": repo["id"], "namespace": f"{api.group}/{slug}"}
-})
-```
-
-> `update_config()` 同时更新磁盘文件和内存配置，重启后生效。
-
-### 使用示例
+### 创建缺失知识库（完整示例）
 
 ```python
 api = YuqueAPI()
 health = api.health_check()
 
-# Token 无效
+# Token 无效 → 终止
 if not health["token"]["ok"]:
     print(f"❌ Token 无效：{health['token']['error']}")
     print("请到 https://www.yuque.com/settings/tokens 重新生成")
     return
 
-# 知识库缺失：创建并回写配置
+# 知识库缺失 → 逐项创建并回写配置
 for label, r in health["repos"].items():
-    if not r["ok"]:
-        slug = api.generate_slug(r["role"])
-        repo = api.create_repo(r["role"], slug)
-        entry = {"book_id": repo["id"], "namespace": f"{api.group}/{slug}"}
-        if label == "default_book":
-            api.update_config({"default_book": entry})
-        else:
-            # index_books[n]：定位索引位置，更新后整体写回列表
-            idx = int(label[12:-1])  # "index_books[0]" → 0
-            api.index_books[idx] = entry
-            api.update_config({"index_books": api.index_books})
-        print(f"✅ 已创建 {r['role']} ({repo['id']})")
+    if r["ok"]:
+        continue
+
+    # 取角色名作为知识库名称（去掉 health_check 内部附加的 #N 索引号）
+    name = r["role"].split(" #")[0]
+    slug = api.generate_slug(name)
+
+    try:
+        repo = api.create_repo(name, slug)
+    except Exception as e:
+        # slug 冲突时换时间戳重试一次
+        slug = api.generate_slug(name)
+        repo = api.create_repo(name, slug)
+
+    entry = {"book_id": repo["id"], "namespace": f"{api.group}/{slug}"}
+
+    if label == "default_book":
+        api.update_config({"default_book": entry})
+    else:
+        # label 格式为 "index_books[N]"，提取索引号
+        idx = int(label.split("[")[1].split("]")[0])
+        api.index_books[idx] = entry
+        api.update_config({"index_books": api.index_books})
+
+    print(f"✅ 已创建 {name} ({repo['id']})")
+
+# 创建完成后建议二次验证
+api.health_check()
 ```
+
+> `generate_slug()` 生成格式：`{小写字母}-{毫秒时间戳}{随机后缀}`，如 `java-982413de2`。
 
 ## 调用约定
 
