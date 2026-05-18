@@ -138,9 +138,9 @@ cp config/yuque-config.example.json config/yuque-config.json
 yuque-ai-skill/
 ├── SKILL.md              # Skill 规范文档（AI Agent 执行指南）
 ├── README.md             # 本文件
-├── yuque_api.py          # 核心 API 封装（纯标准库，820行）
-├── yuque_search.py       # 搜索管线（两级索引+降级+跨库读取）
-├── yuque_index.py        # 索引构建器（全量/增量，JSON格式）
+├── yuque_api.py          # 核心 API 封装（纯标准库，848行）
+├── yuque_search.py       # 搜索管线（两级索引+降级+跨库读取，625行）
+├── yuque_index.py        # 索引构建器（全量/增量，JSON格式，280行）
 ├── config/               # 配置文件目录
 │   ├── yuque-config.example.json # 配置模板
 │   └── yuque-config.json         # 实际配置（不入库）

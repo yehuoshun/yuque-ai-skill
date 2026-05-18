@@ -553,7 +553,10 @@ class YuqueAPI:
             "abstract": abstract_val,
             "status": 9,
         }
-        return self._request("PUT", f"/notes/{note_id}", data=data)
+        result = self._request("PUT", f"/notes/{note_id}", data=data)
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result
 
     def recover_note(self, note_id):
         """恢复小记（status=0）"""
@@ -572,7 +575,10 @@ class YuqueAPI:
             "abstract": abstract_val,
             "status": 0,
         }
-        return self._request("PUT", f"/notes/{note_id}", data=data)
+        result = self._request("PUT", f"/notes/{note_id}", data=data)
+        if isinstance(result, dict) and "data" in result:
+            return result["data"]
+        return result
 
     # ── 搜索笔记 ───────────────────────────────────
 
